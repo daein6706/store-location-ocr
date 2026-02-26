@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>로케이션 조회 (OCR)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
+    video { width: 100%; max-width: 520px; border: 1px solid #ddd; border-radius: 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    button { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    input { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 160px; }
+    .box { margin-top: 12px; padding: 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip { padding: 8px 10px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; }
+    th { background: #f3f3f3; text-align: left; }
+    .hint { color: #666; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h3>진열 라벨 촬영 → 로케이션 조회</h3>
+  <div class="hint">
+    팁: 라벨 글자가 화면에 크게 나오게 + 반사 없게 찍으면 OCR 정확도가 확 올라갑니다.
+  </div>
+
+  <video id="cam" autoplay playsinline></video>
+
+  <div class="row">
+    <button id="btnShot">촬영 & OCR</button>
+    <button id="btnTorch" disabled>플래시 토글</button>
+    <input id="manual" placeholder="직접 입력 (예: AERO)" />
+    <button id="btnLookup">검색</button>
+  </div>
+
+  <div class="box">
+    <div><b>상태:</b> <span id="status">대기</span></div>
+    <div style="margin-top:8px;"><b>OCR 텍스트:</b></div>
+    <pre id="ocrText"></pre>
+    <div style="margin-top:8px;"><b>키워드 후보(탭해서 검색):</b></div>
+    <div class="chips" id="chips"></div>
+
+    <div style="margin-top:10px;"><b>검색 결과:</b> <span id="count"></span></div>
+    <div id="tableWrap"></div>
+  </div>
+
+  <canvas id="cv" style="display:none;"></canvas>
+
+  <!-- 무료 OCR 라이브러리 -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <script>
+    // 1) 여기에 너의 Apps Script 웹앱 URL 넣기
+    const API_BASE = "YOUR_APPS_SCRIPT_WEBAPP_URL"; // 예: https://script.google.com/macros/s/xxx/exec
+
+    const video = document.getElementById("cam");
+    const canvas = document.getElementById("cv");
+    const statusEl = document.getElementById("status");
+    const ocrEl = document.getElementById("ocrText");
+    const chipsEl = document.getElementById("chips");
+    const countEl = document.getElementById("count");
+    const tableWrap = document.getElementById("tableWrap");
+    const manual = document.getElementById("manual");
+
+    const btnShot = document.getElementById("btnShot");
+    const btnLookup = document.getElementById("btnLookup");
+    const btnTorch = document.getElementById("btnTorch");
+
+    let track = null;
+
+    // 카메라 시작
+    (async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" }
+      });
+      video.srcObject = stream;
+      track = stream.getVideoTracks()[0];
+
+      // 플래시(토치) 가능하면 버튼 활성화
+      const caps = track.getCapabilities?.();
+      if (caps && caps.torch) btnTorch.disabled = false;
+    })().catch(err => {
+      statusEl.textContent = "카메라 접근 실패: " + err;
+    });
+
+    // 플래시 토글
+    let torchOn = false;
+    btnTorch.onclick = async () => {
+      try {
+        torchOn = !torchOn;
+        await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+      } catch (e) {
+        statusEl.textContent = "플래시 제어 불가: " + e;
+      }
+    };
+
+    // 촬영 + OCR
+    btnShot.onclick = async () => {
+      chipsEl.innerHTML = "";
+      tableWrap.innerHTML = "";
+      countEl.textContent = "";
+      ocrEl.textContent = "";
+      statusEl.textContent = "촬영 중...";
+
+      // 비디오 프레임 캡처
+      const w = video.videoWidth, h = video.videoHeight;
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, w, h);
+
+      // OCR 정확도를 위해 "가운데 영역"만 크롭(라벨이 중앙에 오도록 찍는 전제)
+      // 필요하면 이 비율을 조절해.
+      const crop = cropCenter_(ctx, w, h, 0.9, 0.45); // (가로90%, 세로45%) 중앙 크롭
+
+      statusEl.textContent = "OCR 인식 중(무료, 약간 느릴 수 있음)...";
+      const { data: { text } } = await Tesseract.recognize(crop, "eng", {
+        logger: m => { /* console.log(m) */ }
+      });
+
+      const ocrText = (text || "").trim();
+      ocrEl.textContent = ocrText || "(인식 결과 없음)";
+      statusEl.textContent = "키워드 추출 중...";
+
+      const candidates = extractCandidates_(ocrText);
+
+      if (!candidates.length) {
+        statusEl.textContent = "키워드 후보를 못 찾았어. 직접 입력으로 검색해줘.";
+        return;
+      }
+
+      renderChips_(candidates);
+      statusEl.textContent = `후보 ${candidates.length}개 생성됨. 탭해서 검색 가능.`;
+
+      // 자동으로 1번 후보 바로 검색(원하면 주석 처리)
+      await lookup_(candidates[0]);
+    };
+
+    // 직접 입력 검색
+    btnLookup.onclick = async () => {
+      const k = manual.value.trim();
+      if (!k) return;
+      await lookup_(k);
+    };
+
+    // 중앙 크롭해서 이미지 데이터URL 반환
+    function cropCenter_(ctx, w, h, wRatio, hRatio) {
+      const cw = Math.floor(w * wRatio);
+      const ch = Math.floor(h * hRatio);
+      const sx = Math.floor((w - cw) / 2);
+      const sy = Math.floor((h - ch) / 2);
+
+      const tmp = document.createElement("canvas");
+      tmp.width = cw; tmp.height = ch;
+      tmp.getContext("2d").drawImage(canvas, sx, sy, cw, ch, 0, 0, cw, ch);
+
+      return tmp.toDataURL("image/jpeg", 0.9);
+    }
+
+    // OCR 텍스트에서 후보 단어 뽑기
+    // 규칙: 대문자/숫자/하이픈 토큰 중 길이 3 이상을 후보로,
+    // 첫 줄/괄호 앞 단어를 우선순위로 정렬.
+    function extractCandidates_(t) {
+      const up = String(t || "").toUpperCase();
+
+      // 1) [ 이전 텍스트 우선(예: "AERO [BLACK-OPTICAL]")
+      const head = up.split("[")[0].trim();
+      const headTok = head.split(/\s+/).filter(Boolean)[0];
+      const out = [];
+
+      if (headTok && /^[A-Z0-9\-]{3,}$/.test(headTok)) out.push(headTok);
+
+      // 2) 전체에서 토큰 수집
+      const toks = up.match(/[A-Z0-9][A-Z0-9\-]{2,}/g) || [];
+      for (const x of toks) {
+        // 너무 흔한 단어/잡음은 제외(원하면 추가)
+        if (["MADE", "IN", "KOREA", "COLOR"].includes(x)) continue;
+        if (!out.includes(x)) out.push(x);
+      }
+
+      // 최대 8개만
+      return out.slice(0, 8);
+    }
+
+    function renderChips_(arr) {
+      chipsEl.innerHTML = "";
+      arr.forEach(k => {
+        const el = document.createElement("div");
+        el.className = "chip";
+        el.textContent = k;
+        el.onclick = () => lookup_(k);
+        chipsEl.appendChild(el);
+      });
+    }
+
+    async function lookup_(keyword) {
+      statusEl.textContent = `검색 중: ${keyword}`;
+      manual.value = keyword;
+
+      const url = `${API_BASE}?keyword=${encodeURIComponent(keyword)}`;
+      const r = await fetch(url);
+      const data = await r.json();
+
+      if (!data.ok) {
+        statusEl.textContent = `검색 실패: ${data.reason || data.error}`;
+        return;
+      }
+
+      statusEl.textContent = `완료: ${data.keyword} / ${data.count}개`;
+      countEl.textContent = `${data.count}개`;
+
+      // 테이블 렌더
+      const rows = data.results || [];
+      if (!rows.length) {
+        tableWrap.innerHTML = "<div class='hint'>일치 결과 없음</div>";
+        return;
+      }
+
+      let html = "<table><thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th></tr></thead><tbody>";
+      for (const x of rows) {
+        html += `<tr><td>${escapeHtml_(x.location)}</td><td>${escapeHtml_(x.name)}</td><td>${escapeHtml_(x.code)}</td></tr>`;
+      }
+      html += "</tbody></table>";
+      tableWrap.innerHTML = html;
+    }
+
+    function escapeHtml_(s) {
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+  </script>
+</body>
+</html>
