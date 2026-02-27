@@ -9,6 +9,7 @@
     #reader { width: 100%; max-width: 520px; }
     .box { margin-top: 12px; padding: 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
     button { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     input[type="text"] { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 180px; }
     input[type="file"] { padding: 10px 0; }
     .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center; }
@@ -30,17 +31,20 @@
   <h3>로케이션 조회</h3>
   <div class="hint">QR(상품코드) / 상품명 키워드 / 코드 라벨 사진(OCR)</div>
 
+  <!-- QR -->
   <div id="reader"></div>
   <div class="row">
     <button id="btnStart">QR 스캔 시작</button>
     <button id="btnStop">QR 스캔 중지</button>
   </div>
 
+  <!-- 텍스트 검색 -->
   <div class="row">
-    <input id="kw" type="text" placeholder="키워드(예: FEZ)" />
+    <input id="kw" type="text" placeholder="키워드(예: FEZ / AERO)" />
     <button id="btnKw">상품명 검색</button>
   </div>
 
+  <!-- OCR -->
   <div class="box">
     <div><b>코드 라벨 사진(OCR)</b></div>
     <div class="small">팁: 글자만 크게(3배 줌) + 선명하게 + 화면 중앙</div>
@@ -54,6 +58,7 @@
     <div class="chips" id="chips"></div>
   </div>
 
+  <!-- 결과 -->
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
     <div><b>코드:</b> <span id="code"></span></div>
@@ -64,6 +69,7 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <script>
+    // ✅ 기본 API(아무 매장 하나 넣어두기). 매장별로는 URL에 ?api=... 붙여서 사용
     const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbwb7N0iNMT4Pg3i2INRrcJTEeAfovMATjtH0kKvPr5kJ_VwxVSntfNjW-KG_hIB2SCq/exec";
     const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
 
@@ -77,6 +83,7 @@
     const ocrTextEl = document.getElementById("ocrText");
     const chipsEl = document.getElementById("chips");
 
+    // ----- QR -----
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
 
@@ -85,6 +92,7 @@
       scanning = true;
       statusEl.textContent = "카메라 시작...";
       resultEl.innerHTML = "";
+
       try {
         await html5QrCode.start(
           { facingMode: "environment" },
@@ -117,21 +125,24 @@
       scanning = false;
     }
 
+    // ----- 텍스트 검색 -----
     document.getElementById("btnKw").onclick = () => {
-      const keyword = kwEl.value.trim();
+      const keyword = (kwEl.value || "").trim();
       if (!keyword) return;
       codeEl.textContent = "";
       statusEl.textContent = "검색 중...";
       lookupJSONP_({ mode: "keyword", keyword });
     };
 
-    photoEl.addEventListener("change", () => {
-      btnOcr.disabled = !photoEl.files || !photoEl.files.length;
-      ocrTextEl.textContent = "";
-      chipsEl.innerHTML = "";
-    });
+    // ----- OCR 버튼 활성화(안정) -----
+    function refreshOcrButton_() {
+      btnOcr.disabled = !(photoEl && photoEl.files && photoEl.files.length);
+    }
+    photoEl.addEventListener("change", refreshOcrButton_);
+    photoEl.addEventListener("input", refreshOcrButton_);
+    refreshOcrButton_();
 
-    // ✅ 타임아웃(멈춤 방지)
+    // ----- OCR (짧은 단어/코드 최적화, 멈춤 방지) -----
     function withTimeout(promise, ms, label="작업") {
       return Promise.race([
         promise,
@@ -143,8 +154,6 @@
       if (!photoEl.files || !photoEl.files.length) return;
 
       await stopScan_();
-
-      // 버튼 잠금(연타 방지)
       btnOcr.disabled = true;
 
       try {
@@ -155,28 +164,28 @@
         const file = photoEl.files[0];
         const imgUrl = await fileToDataUrl_(file);
 
-        // ✅ 시도 수를 2~3번으로 제한(현장용)
-        // 1) 원본+PSM8
-        // 2) 중앙크롭(0.85)+PSM8
-        // 3) 중앙크롭+이진화(170)+PSM8
-        const candidates = [];
+        // ✅ 현장용: 3회만 시도(빠르고 안정)
+        // 1) 원본 PSM8
+        // 2) 중앙 크롭 0.85 PSM8
+        // 3) 중앙 크롭 + 이진화(170) PSM8
+        const tries = [];
 
         statusEl.textContent = "OCR(1/3)...";
-        candidates.push(await ocrOnce_(imgUrl, null));
+        tries.push(await ocrOnce_(imgUrl));
 
         statusEl.textContent = "OCR(2/3)...";
         const crop = await cropCenter_(imgUrl, 0.85, 0.85);
-        candidates.push(await ocrOnce_(crop, null));
+        tries.push(await ocrOnce_(crop));
 
         statusEl.textContent = "OCR(3/3)...";
         const bin = await binarize_(crop, 170);
-        candidates.push(await ocrOnce_(bin, null));
+        tries.push(await ocrOnce_(bin));
 
-        const best = pickBestShort_(candidates);
+        const best = pickBest_(tries);
         ocrTextEl.textContent = best.cleaned || "(인식 결과 없음)";
 
         if (!best.token) {
-          statusEl.textContent = "키워드 추출 실패(더 선명하게 찍어줘)";
+          statusEl.textContent = "키워드 추출 실패(더 선명하게/더 크게 찍어줘)";
           return;
         }
 
@@ -185,40 +194,57 @@
         lookupJSONP_({ mode: "keyword", keyword: best.token });
 
       } catch (e) {
-        statusEl.textContent = "OCR 실패: " + e.message;
+        statusEl.textContent = "OCR 실패: " + (e.message || e);
       } finally {
-        // 다시 선택하면 enable되지만, 여기서도 안전하게
-        btnOcr.disabled = false;
+        refreshOcrButton_(); // 파일이 있으면 다시 활성화
       }
     };
 
-    async function ocrOnce_(dataUrl, _unused) {
-      // ✅ iOS에서 멈추는 경우 대비: 15초 타임아웃
+    async function ocrOnce_(dataUrl) {
+      // iOS/인앱에서 멈춤 방지: 15초 타임아웃
       const res = await withTimeout(
         Tesseract.recognize(dataUrl, "eng", {
           tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ",
-          tessedit_pageseg_mode: "8" // 단어 1개
+          tessedit_pageseg_mode: "8" // 단어 1개에 유리
         }),
         15000,
         "OCR"
       );
 
-      const raw = res?.data?.text || "";
-      const cleaned = cleanOcrShort_(raw);
-      const token = pickShortToken_(cleaned);
-      return { raw, cleaned, token };
+      const raw = (res && res.data && res.data.text) ? res.data.text : "";
+      const cleaned = cleanOcr_(raw);
+      const token = pickToken_(cleaned);
+      const score = score_(token, cleaned);
+      return { raw, cleaned, token, score };
     }
 
-    function pickBestShort_(arr) {
-      let best = { score: -1, raw:"", cleaned:"", token:"" };
-      for (const x of arr) {
-        const s = scoreShort_(x.token, x.cleaned);
-        if (s > best.score) best = { ...x, score: s };
+    function cleanOcr_(t) {
+      return String(t || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    // ✅ 핵심: 연속 토큰이 없으면 한 글자들을 이어붙여서(F E Z -> FEZ) 사용
+    function pickToken_(t) {
+      const s = String(t || "").trim().toUpperCase();
+      if (!s) return "";
+
+      const toks = s.match(/[A-Z0-9]{2,}/g) || [];
+      if (toks.length) {
+        toks.sort((a,b) => b.length - a.length);
+        return toks[0];
       }
-      return best;
+
+      const singles = s.match(/[A-Z0-9]/g) || [];
+      if (singles.length >= 2) {
+        return singles.slice(0, 8).join("");
+      }
+      return "";
     }
 
-    function scoreShort_(token, cleaned) {
+    function score_(token, cleaned) {
       if (!token) return -1;
       const len = token.length;
       let score = 0;
@@ -228,35 +254,21 @@
       return score;
     }
 
-    function cleanOcrShort_(t) {
-      return String(t || "")
-        .toUpperCase()
-        .replace(/[^A-Z0-9\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+    function pickBest_(arr) {
+      let best = { score: -1, cleaned:"", token:"" };
+      for (const x of arr) if (x.score > best.score) best = x;
+      return best;
     }
 
-   function pickShortToken_(t) {
-  const s = String(t || "").trim().toUpperCase();
-  if (!s) return "";
-
-  // 1) 먼저 연속된 영숫자 토큰(2글자 이상) 우선
-  const toks = s.match(/[A-Z0-9]{2,}/g) || [];
-  if (toks.length) {
-    toks.sort((a,b) => b.length - a.length);
-    return toks[0];
-  }
-
-  // 2) 연속 토큰이 없으면: 한 글자씩 떨어진 경우(F E Z) 처리
-  //    => 한 글자 토큰들을 이어붙여서 코드로 사용
-  const singles = s.match(/[A-Z0-9]/g) || [];
-  if (singles.length >= 2) {
-    // 너무 길게 붙지 않도록 2~8글자까지만
-    return singles.slice(0, 8).join("");
-  }
-
-  return "";
-}
+    function renderChips_(arr) {
+      chipsEl.innerHTML = "";
+      arr.forEach(k => {
+        const el = document.createElement("div");
+        el.className = "chip";
+        el.textContent = k;
+        el.onclick = () => lookupJSONP_({ mode: "keyword", keyword: k });
+        chipsEl.appendChild(el);
+      });
     }
 
     function fileToDataUrl_(file) {
@@ -308,18 +320,7 @@
       });
     }
 
-    function renderChips_(arr) {
-      chipsEl.innerHTML = "";
-      arr.forEach(k => {
-        const el = document.createElement("div");
-        el.className = "chip";
-        el.textContent = k;
-        el.onclick = () => lookupJSONP_({ mode: "keyword", keyword: k });
-        chipsEl.appendChild(el);
-      });
-    }
-
-    // ---------- JSONP ----------
+    // ----- JSONP -----
     function lookupJSONP_(params) {
       const cb = "__cb_" + Math.random().toString(36).slice(2);
       let script;
@@ -407,4 +408,3 @@
   </script>
 </body>
 </html>
-
