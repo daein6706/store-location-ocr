@@ -25,11 +25,6 @@
     th { background: #f3f3f3; text-align: left; }
     table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
     th.note, td.note { min-width: 160px; white-space: normal; word-break: keep-all; }
-
-    /* 디버그 프리뷰 이미지 */
-    .preview { margin-top: 8px; display:flex; gap:10px; flex-wrap:wrap; }
-    .preview img { max-width: 220px; border: 1px solid #ddd; border-radius: 8px; background:#fff; }
-    .badge { display:inline-block; padding: 2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#555; background:#fff; }
   </style>
 </head>
 <body>
@@ -45,14 +40,12 @@
 
   <!-- QR 사진 업로드 -->
   <div class="box">
-    <div><b>QR 사진 업로드로 스캔</b> <span class="badge">줌 추천</span></div>
-    <div class="small">팁: 3배 줌으로 QR을 크게 + 흔들림 없이 + QR만 화면에 크게</div>
+    <div><b>QR 사진 업로드로 스캔</b></div>
+    <div class="small">팁: 3배 줌으로 QR만 크게 찍고 업로드</div>
     <div class="row">
       <input id="qrPhoto" type="file" accept="image/*" capture="environment" />
       <button id="btnQrPhoto" disabled>QR 사진 스캔</button>
     </div>
-    <div class="small">스캔된 상품코드: <b><span id="qrPhotoCode"></span></b></div>
-    <div class="preview" id="qrPreview"></div>
   </div>
 
   <!-- 텍스트 검색 -->
@@ -63,13 +56,12 @@
 
   <!-- 상품명 OCR(라벨) -->
   <div class="box">
-    <div><b>라벨 사진(OCR)로 상품명 추출</b> <span class="badge">라벨형</span></div>
+    <div><b>라벨 사진(OCR)로 상품명 추출</b></div>
     <div class="small">팁: 3배 줌 + 라벨이 화면 중앙 + 글자 크게 + 반사 없게</div>
     <div class="row">
       <input id="photo" type="file" accept="image/*" capture="environment" />
       <button id="btnOcr" disabled>라벨 OCR 실행</button>
     </div>
-    <div class="preview" id="ocrPreview"></div>
     <div><b>OCR 텍스트:</b></div>
     <pre id="ocrText"></pre>
     <div><b>키워드 후보(탭해서 검색):</b></div>
@@ -86,7 +78,6 @@
   <!-- 라이브러리 -->
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
   <script>
     const API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec";
@@ -99,15 +90,12 @@
     // QR 사진 업로드
     const qrPhotoEl = document.getElementById("qrPhoto");
     const btnQrPhoto = document.getElementById("btnQrPhoto");
-    const qrPhotoCodeEl = document.getElementById("qrPhotoCode");
-    const qrPreviewEl = document.getElementById("qrPreview");
 
     // 라벨 OCR
     const photoEl = document.getElementById("photo");
     const btnOcr = document.getElementById("btnOcr");
     const ocrTextEl = document.getElementById("ocrText");
     const chipsEl = document.getElementById("chips");
-    const ocrPreviewEl = document.getElementById("ocrPreview");
 
     // ---------- QR 실시간 ----------
     const html5QrCode = new Html5Qrcode("reader");
@@ -151,145 +139,34 @@
       scanning = false;
     }
 
-    // ---------- QR 사진 업로드 ----------
+    // ---------- QR 사진 업로드 (핵심: scanFile만 사용) ----------
     qrPhotoEl.addEventListener("change", () => {
       btnQrPhoto.disabled = !qrPhotoEl.files || !qrPhotoEl.files.length;
-      qrPhotoCodeEl.textContent = "";
-      qrPreviewEl.innerHTML = "";
     });
 
     btnQrPhoto.onclick = async () => {
       if (!qrPhotoEl.files || !qrPhotoEl.files.length) return;
 
-      await stopScan_();
-      statusEl.textContent = "QR 사진 분석 중...";
-      qrPhotoCodeEl.textContent = "";
+      await stopScan_(); // 카메라 충돌 방지
+      statusEl.textContent = "QR 사진 스캔 중...";
       resultEl.innerHTML = "";
-      qrPreviewEl.innerHTML = "";
 
       const file = qrPhotoEl.files[0];
 
-      // 1차: html5-qrcode의 scanFile (인식률 좋음)
       try {
-        const tmp = new Html5Qrcode("reader"); // 임시 인스턴스
-        const decodedText = await tmp.scanFile(file, true); // showImage = true
-        // scanFile이 reader에 이미지를 표시할 수 있어서, reader가 깨질 수 있으면 별도 div를 쓰는 게 좋지만
-        // 여기서는 결과만 사용
-        if (decodedText) {
-          const code = decodedText.trim();
-          qrPhotoCodeEl.textContent = code;
-          codeEl.textContent = code;
-          statusEl.textContent = "QR 인식 완료(파일 스캔) → 코드 조회 중...";
-          lookupJSONP_({ mode: "code", code });
-          return;
-        }
+        // html5-qrcode의 file scan은 인식률이 비교적 좋음
+        const scanner = new Html5Qrcode("reader");
+        const decodedText = await scanner.scanFile(file, true); // showImage=true
+        const code = String(decodedText || "").trim();
+        if (!code) throw new Error("empty");
+
+        codeEl.textContent = code;
+        statusEl.textContent = "QR 인식 완료 → 코드 조회 중...";
+        lookupJSONP_({ mode: "code", code });
       } catch (e) {
-        // 2차로 넘어감
+        statusEl.textContent = "QR 인식 실패. (QR만 크게/선명하게 찍어서 업로드해줘)";
       }
-
-      // 2차: jsQR + 전처리(다운스케일+그레이/이진화)
-      const dataUrl = await fileToDataUrl_(file);
-      const { decoded, previews } = await decodeQrWithPreprocess_(dataUrl);
-      qrPreviewEl.innerHTML = previews.map(p => `<img src="${p}" alt="qr-pre">`).join("");
-
-      if (!decoded) {
-        statusEl.textContent = "QR 인식 실패(더 크게/선명하게/QR만 화면에 크게)";
-        return;
-      }
-
-      const code = decoded.trim();
-      qrPhotoCodeEl.textContent = code;
-      codeEl.textContent = code;
-      statusEl.textContent = "QR 인식 완료(전처리) → 코드 조회 중...";
-      lookupJSONP_({ mode: "code", code });
     };
-
-    async function decodeQrWithPreprocess_(dataUrl) {
-      // 원본 → 다운스케일(최대 1200px) → 그레이/이진화 → jsQR
-      const previews = [];
-      const img = await loadImage_(dataUrl);
-
-      // 1) downscale
-      const scaled = drawToCanvas_(img, 1200);
-      // 2) grayscale+binarize a few thresholds
-      const thresholds = [150, 170, 190];
-      for (const th of thresholds) {
-        const bin = binarizeCanvas_(scaled, th);
-        const binUrl = bin.toDataURL("image/png");
-        previews.push(binUrl);
-
-        const decoded = jsqrFromCanvas_(bin);
-        if (decoded) return { decoded, previews };
-      }
-
-      // 3) center-crop tries (QR이 중앙에 찍히는 경우)
-      const crops = [
-        { w: 0.8, h: 0.8 },
-        { w: 0.65, h: 0.65 },
-        { w: 0.5, h: 0.5 },
-      ];
-      for (const c of crops) {
-        const cropped = cropCenterCanvas_(scaled, c.w, c.h);
-        for (const th of thresholds) {
-          const bin = binarizeCanvas_(cropped, th);
-          const decoded = jsqrFromCanvas_(bin);
-          if (decoded) {
-            previews.push(bin.toDataURL("image/png"));
-            return { decoded, previews };
-          }
-        }
-      }
-
-      return { decoded: "", previews };
-    }
-
-    function jsqrFromCanvas_(canvas) {
-      const ctx = canvas.getContext("2d");
-      const im = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(im.data, canvas.width, canvas.height);
-      return code ? code.data : "";
-    }
-
-    function drawToCanvas_(img, maxSide) {
-      const w = img.width, h = img.height;
-      const scale = Math.min(1, maxSide / Math.max(w, h));
-      const cw = Math.max(1, Math.floor(w * scale));
-      const ch = Math.max(1, Math.floor(h * scale));
-      const c = document.createElement("canvas");
-      c.width = cw; c.height = ch;
-      const ctx = c.getContext("2d");
-      ctx.drawImage(img, 0, 0, cw, ch);
-      return c;
-    }
-
-    function cropCenterCanvas_(srcCanvas, wRatio, hRatio) {
-      const w = srcCanvas.width, h = srcCanvas.height;
-      const cw = Math.floor(w * wRatio);
-      const ch = Math.floor(h * hRatio);
-      const sx = Math.floor((w - cw) / 2);
-      const sy = Math.floor((h - ch) / 2);
-      const c = document.createElement("canvas");
-      c.width = cw; c.height = ch;
-      c.getContext("2d").drawImage(srcCanvas, sx, sy, cw, ch, 0, 0, cw, ch);
-      return c;
-    }
-
-    function binarizeCanvas_(srcCanvas, threshold) {
-      const c = document.createElement("canvas");
-      c.width = srcCanvas.width; c.height = srcCanvas.height;
-      const ctx = c.getContext("2d");
-      ctx.drawImage(srcCanvas, 0, 0);
-
-      const im = ctx.getImageData(0, 0, c.width, c.height);
-      const d = im.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const y = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-        const v = y > threshold ? 255 : 0;
-        d[i] = d[i+1] = d[i+2] = v;
-      }
-      ctx.putImageData(im, 0, 0);
-      return c;
-    }
 
     // ---------- 텍스트 검색 ----------
     document.getElementById("btnKw").onclick = () => {
@@ -300,34 +177,26 @@
       lookupJSONP_({ mode: "keyword", keyword });
     };
 
-    // ---------- 라벨 OCR ----------
+    // ---------- 라벨 OCR (현재 잘 되는 방식 유지: 크롭+이진화+PSM7) ----------
     photoEl.addEventListener("change", () => {
       btnOcr.disabled = !photoEl.files || !photoEl.files.length;
       ocrTextEl.textContent = "";
       chipsEl.innerHTML = "";
-      ocrPreviewEl.innerHTML = "";
     });
 
     btnOcr.onclick = async () => {
       if (!photoEl.files || !photoEl.files.length) return;
-      await stopScan_();
 
+      await stopScan_();
       statusEl.textContent = "라벨 OCR 준비 중...";
       ocrTextEl.textContent = "";
       chipsEl.innerHTML = "";
-      ocrPreviewEl.innerHTML = "";
 
       const file = photoEl.files[0];
       const imgUrl = await fileToDataUrl_(file);
-      const img = await loadImage_(imgUrl);
 
-      // 라벨 전용 크롭(중앙 가로 길게/세로 얇게)
-      const crop = cropCenterDataUrl_(img, 0.95, 0.26);
-      // 이진화
-      const clean = await binarizeDataUrl_(crop, 170);
-
-      // 디버그 프리뷰
-      ocrPreviewEl.innerHTML = `<img src="${crop}" alt="crop"><img src="${clean}" alt="bin">`;
+      const crop = await cropCenterLabel_(imgUrl);
+      const clean = await binarize_(crop, 170);
 
       statusEl.textContent = "OCR 인식 중...";
       const { data: { text } } = await Tesseract.recognize(clean, "eng", {
@@ -340,7 +209,7 @@
 
       const product = pickProductNameFromLabel_(cleaned);
       if (!product) {
-        statusEl.textContent = "상품명 추출 실패(라벨이 더 크게 나오게 찍어줘)";
+        statusEl.textContent = "상품명 추출 실패(라벨을 더 크게 찍어줘)";
         return;
       }
 
@@ -349,7 +218,6 @@
       lookupJSONP_({ mode: "keyword", keyword: product });
     };
 
-    // ---------- 공용 유틸 ----------
     function fileToDataUrl_(file) {
       return new Promise((resolve, reject) => {
         const r = new FileReader();
@@ -359,28 +227,27 @@
       });
     }
 
-    function loadImage_(dataUrl) {
+    async function cropCenterLabel_(dataUrl) {
       return new Promise((resolve) => {
         const img = new Image();
-        img.onload = () => resolve(img);
+        img.onload = () => {
+          const w = img.width, h = img.height;
+          const cw = Math.floor(w * 0.95);
+          const ch = Math.floor(h * 0.26);
+          const sx = Math.floor((w - cw) / 2);
+          const sy = Math.floor((h - ch) / 2);
+
+          const c = document.createElement("canvas");
+          c.width = cw; c.height = ch;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+          resolve(c.toDataURL("image/png"));
+        };
         img.src = dataUrl;
       });
     }
 
-    function cropCenterDataUrl_(img, wRatio, hRatio) {
-      const w = img.width, h = img.height;
-      const cw = Math.floor(w * wRatio);
-      const ch = Math.floor(h * hRatio);
-      const sx = Math.floor((w - cw) / 2);
-      const sy = Math.floor((h - ch) / 2);
-      const c = document.createElement("canvas");
-      c.width = cw; c.height = ch;
-      const ctx = c.getContext("2d");
-      ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
-      return c.toDataURL("image/png");
-    }
-
-    function binarizeDataUrl_(dataUrl, threshold = 170) {
+    async function binarize_(dataUrl, threshold = 170) {
       return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
