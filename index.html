@@ -29,7 +29,7 @@
 </head>
 <body>
   <h3>로케이션 조회</h3>
-  <div class="hint">QR(상품코드) / 상품명 키워드 / 코드 라벨 사진(OCR)</div>
+  <div class="hint">QR(상품코드/스타일키) / 상품명 키워드 / 코드 라벨 사진(OCR)</div>
 
   <!-- QR -->
   <div id="reader"></div>
@@ -69,7 +69,7 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <script>
-    // ✅ 기본 API(아무 매장 하나 넣어두기). 매장별로는 URL에 ?api=... 붙여서 사용
+    // ✅ 기본 API(아무 매장 1개). 매장별로는 URL에 ?api=... 붙여서 사용
     const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbwb7N0iNMT4Pg3i2INRrcJTEeAfovMATjtH0kKvPr5kJ_VwxVSntfNjW-KG_hIB2SCq/exec";
     const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
 
@@ -98,11 +98,45 @@
           { facingMode: "environment" },
           { fps: 10, qrbox: { width: 250, height: 250 } },
           async (decodedText) => {
-            const code = decodedText.trim();
-            codeEl.textContent = code;
-            statusEl.textContent = "스캔 완료 → 코드 조회 중...";
-            await stopScan_();
-            lookupJSONP_({ mode: "code", code });
+            const raw = decodedText.trim();
+
+            // ✅ QR 내용에 따라 분기:
+            // - K:FEZ   => 키워드 검색(컬러 여러개 한번에)
+            // - C:DL2.. => 코드 단건 조회
+            // - 접두어 없으면 자동 판별
+            if (raw.startsWith("K:")) {
+              const keyword = raw.slice(2).trim();
+              codeEl.textContent = keyword;
+              statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
+              await stopScan_();
+              lookupJSONP_({ mode: "keyword", keyword });
+              return;
+            }
+
+            if (raw.startsWith("C:")) {
+              const code = raw.slice(2).trim();
+              codeEl.textContent = code;
+              statusEl.textContent = "스캔 완료 → 코드 조회 중...";
+              await stopScan_();
+              lookupJSONP_({ mode: "code", code });
+              return;
+            }
+
+            // 자동 판별: 숫자 포함 + 길이>=6이면 코드로 간주, 아니면 키워드
+            const hasDigit = /\d/.test(raw);
+            if (raw.length >= 6 && hasDigit) {
+              const code = raw;
+              codeEl.textContent = code;
+              statusEl.textContent = "스캔 완료 → 코드 조회 중...";
+              await stopScan_();
+              lookupJSONP_({ mode: "code", code });
+            } else {
+              const keyword = raw;
+              codeEl.textContent = keyword;
+              statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
+              await stopScan_();
+              lookupJSONP_({ mode: "keyword", keyword });
+            }
           },
           () => {}
         );
@@ -165,9 +199,6 @@
         const imgUrl = await fileToDataUrl_(file);
 
         // ✅ 현장용: 3회만 시도(빠르고 안정)
-        // 1) 원본 PSM8
-        // 2) 중앙 크롭 0.85 PSM8
-        // 3) 중앙 크롭 + 이진화(170) PSM8
         const tries = [];
 
         statusEl.textContent = "OCR(1/3)...";
@@ -196,16 +227,15 @@
       } catch (e) {
         statusEl.textContent = "OCR 실패: " + (e.message || e);
       } finally {
-        refreshOcrButton_(); // 파일이 있으면 다시 활성화
+        refreshOcrButton_();
       }
     };
 
     async function ocrOnce_(dataUrl) {
-      // iOS/인앱에서 멈춤 방지: 15초 타임아웃
       const res = await withTimeout(
         Tesseract.recognize(dataUrl, "eng", {
           tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ",
-          tessedit_pageseg_mode: "8" // 단어 1개에 유리
+          tessedit_pageseg_mode: "8"
         }),
         15000,
         "OCR"
@@ -226,7 +256,7 @@
         .trim();
     }
 
-    // ✅ 핵심: 연속 토큰이 없으면 한 글자들을 이어붙여서(F E Z -> FEZ) 사용
+    // ✅ 연속 토큰이 없으면 한 글자들을 이어붙임(F E Z -> FEZ)
     function pickToken_(t) {
       const s = String(t || "").trim().toUpperCase();
       if (!s) return "";
