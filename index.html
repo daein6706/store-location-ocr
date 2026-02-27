@@ -19,7 +19,7 @@
     pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
 
     /* 테이블 */
-    #result { overflow-x: auto; }
+    #result { overflow-x: auto; }             /* 모바일에서 가로 스크롤(안전장치) */
     table { border-collapse: collapse; width: 100%; margin-top: 10px; min-width: 720px; }
     th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; vertical-align: top; }
     th { background: #f3f3f3; text-align: left; }
@@ -29,7 +29,7 @@
 
     /* 비고 컬럼 폭 확보(10글자 내외 기준) + 줄바꿈 허용 */
     th.note, td.note {
-      min-width: 160px;
+      min-width: 160px;      /* 10글자 내외면 이 정도가 보기 좋음 */
       white-space: normal;
       word-break: keep-all;
     }
@@ -160,12 +160,24 @@
       const file = photoEl.files[0];
       const imgUrl = await fileToDataUrl_(file);
 
-      // ✅ 라벨 OCR: 여러 크롭/임계값으로 반복 시도 후 최적 결과 선택
-      const best = await runOcrBest_(imgUrl);
+      // ✅ 라벨 전용: 중앙 가로 길게/세로 얇게 크롭
+      const crop = await cropCenterLabel_(imgUrl);
 
-      const cleaned = cleanOcr_(best.text);
+      // ✅ 대비 강화: 이진화(흑백)
+      const clean = await binarize_(crop, 170);
+
+      statusEl.textContent = "OCR 인식 중(무료, 조금 느릴 수 있음)...";
+
+      // ✅ 한 줄 텍스트 가정 + 영문/숫자/쉼표/공백만 허용
+      const { data: { text } } = await Tesseract.recognize(clean, "eng", {
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789, ",
+        tessedit_pageseg_mode: "7"
+      });
+
+      const cleaned = cleanOcr_(text);
       ocrTextEl.textContent = cleaned || "(인식 결과 없음)";
 
+      // ✅ 가격 제거 후 상품명 토큰 추출(가장 긴 영문 단어)
       const product = pickProductNameFromLabel_(cleaned);
 
       if (!product) {
@@ -189,19 +201,14 @@
       });
     }
 
-    // (기존) 중앙 크롭 기본값
+    // 라벨이 사진 중앙에 있고 가로로 긴 형태 가정
     async function cropCenterLabel_(dataUrl) {
-      return cropCenterLabelCustom_(dataUrl, 0.95, 0.26);
-    }
-
-    // 중앙 크롭(비율 파라미터)
-    async function cropCenterLabelCustom_(dataUrl, wRatio, hRatio) {
       return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
           const w = img.width, h = img.height;
-          const cw = Math.floor(w * wRatio);
-          const ch = Math.floor(h * hRatio);
+          const cw = Math.floor(w * 0.95);
+          const ch = Math.floor(h * 0.26); // 필요하면 0.22~0.30 사이 조절
           const sx = Math.floor((w - cw) / 2);
           const sy = Math.floor((h - ch) / 2);
 
@@ -241,68 +248,16 @@
     function cleanOcr_(t) {
       return String(t || "")
         .toUpperCase()
-        .replace(/[^A-Z0-9\-\[\]\s,]/g, " ")
+        .replace(/[^A-Z0-9,\s]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
     }
 
-    // 여러 크롭/threshold 조합으로 OCR을 돌려서 최적 결과 선택
-    async function runOcrBest_(imgUrl) {
-      const cropHeights = [0.22, 0.26, 0.30];
-      const thresholds = [150, 170, 190];
-
-      let best = { score: -1, text: "" };
-
-      for (const hRatio of cropHeights) {
-        const crop = await cropCenterLabelCustom_(imgUrl, 0.95, hRatio);
-        for (const th of thresholds) {
-          const clean = await binarize_(crop, th);
-
-          const { data: { text } } = await Tesseract.recognize(clean, "eng", {
-            tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-[] ,",
-            tessedit_pageseg_mode: "7"
-          });
-
-          const t = cleanOcr_(text);
-          const s = scoreOcrText_(t);
-          if (s > best.score) best = { score: s, text: t };
-        }
-      }
-
-      return best;
-    }
-
-    function scoreOcrText_(t) {
-      const s = String(t || "").trim();
-      if (!s) return -1;
-
-      const words = s.match(/[A-Z]{3,}/g) || [];
-      const hasWord = words.length > 0;
-      const len = s.length;
-
-      const digits = (s.match(/[0-9]/g) || []).length;
-      const digitRatio = digits / Math.max(1, len);
-
-      let score = 0;
-      if (hasWord) score += 50;
-      score += Math.min(30, words.join("").length);
-      score += Math.max(0, 30 - Math.abs(len - 18));
-      score -= Math.floor(digitRatio * 40);
-      score -= Math.max(0, len - 60);
-
-      return score;
-    }
-
-    // 상품명 추출: 반복 단어(HUG HUG) 지원 + 그 외는 가장 긴 단어
+    // "CHEEKBONE 89,900" -> "CHEEKBONE"
     function pickProductNameFromLabel_(ocrText) {
       const up = String(ocrText || "").toUpperCase();
       const tokens = up.match(/[A-Z]{3,}/g) || [];
       if (!tokens.length) return "";
-
-      if (tokens.length >= 2 && tokens[0] === tokens[1]) {
-        return tokens[0] + " " + tokens[1];
-      }
-
       tokens.sort((a,b) => b.length - a.length);
       return tokens[0];
     }
@@ -336,6 +291,7 @@
             return;
           }
 
+          // code 조회(단일)
           if (params.mode === "code") {
             statusEl.textContent = "완료";
             const loc = String(data.location || "").replace(/\s+/g, "");
@@ -356,6 +312,7 @@
             return;
           }
 
+          // keyword 검색(목록)
           statusEl.textContent = `완료: ${data.count}개`;
           const rows = data.results || [];
           if (!rows.length) {
