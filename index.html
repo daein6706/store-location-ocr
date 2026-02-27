@@ -18,21 +18,12 @@
     .chip { padding: 8px 10px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; }
     pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
 
-    /* 테이블 */
-    #result { overflow-x: auto; }             /* 모바일에서 가로 스크롤(안전장치) */
+    #result { overflow-x: auto; }
     table { border-collapse: collapse; width: 100%; margin-top: 10px; min-width: 720px; }
     th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; vertical-align: top; }
     th { background: #f3f3f3; text-align: left; }
-
-    /* 로케이션은 한 줄 유지 */
     table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
-
-    /* 비고 컬럼 폭 확보(10글자 내외 기준) + 줄바꿈 허용 */
-    th.note, td.note {
-      min-width: 160px;      /* 10글자 내외면 이 정도가 보기 좋음 */
-      white-space: normal;
-      word-break: keep-all;
-    }
+    th.note, td.note { min-width: 160px; white-space: normal; word-break: keep-all; }
   </style>
 </head>
 <body>
@@ -52,10 +43,10 @@
     <button id="btnKw">상품명 검색</button>
   </div>
 
-  <!-- OCR(라벨 사진 업로드) -->
+  <!-- OCR -->
   <div class="box">
     <div><b>라벨 사진(OCR)로 상품명 추출</b></div>
-    <div class="small">팁: 3배 줌 + 라벨이 화면 중앙 + 글자 크게 + 반사 없게</div>
+    <div class="small">팁: 3배 줌 + 라벨 중앙 + 글자 크게 + 반사 없게</div>
     <div class="row">
       <input id="photo" type="file" accept="image/*" capture="environment" />
       <button id="btnOcr" disabled>사진 OCR 실행</button>
@@ -77,8 +68,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <script>
-    const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec"; 
-const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
+    const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbwb7N0iNMT4Pg3i2INRrcJTEeAfovMATjtH0kKvPr5kJ_VwxVSntfNjW-KG_hIB2SCq/exec";
+    const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
 
     const statusEl = document.getElementById("status");
     const codeEl = document.getElementById("code");
@@ -151,7 +142,6 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
     btnOcr.onclick = async () => {
       if (!photoEl.files || !photoEl.files.length) return;
 
-      // 카메라 충돌 방지
       await stopScan_();
 
       statusEl.textContent = "OCR 준비 중...";
@@ -161,26 +151,13 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
       const file = photoEl.files[0];
       const imgUrl = await fileToDataUrl_(file);
 
-      // ✅ 라벨 전용: 중앙 가로 길게/세로 얇게 크롭
-      const crop = await cropCenterLabel_(imgUrl);
+      // ✅ 멀티 시도 OCR
+      const best = await runOcrBest_(imgUrl);
 
-      // ✅ 대비 강화: 이진화(흑백)
-      const clean = await binarize_(crop, 170);
-
-      statusEl.textContent = "OCR 인식 중(무료, 조금 느릴 수 있음)...";
-
-      // ✅ 한 줄 텍스트 가정 + 영문/숫자/쉼표/공백만 허용
-      const { data: { text } } = await Tesseract.recognize(clean, "eng", {
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789, ",
-        tessedit_pageseg_mode: "7"
-      });
-
-      const cleaned = cleanOcr_(text);
+      const cleaned = cleanOcr_(best.text);
       ocrTextEl.textContent = cleaned || "(인식 결과 없음)";
 
-      // ✅ 가격 제거 후 상품명 토큰 추출(가장 긴 영문 단어)
       const product = pickProductNameFromLabel_(cleaned);
-
       if (!product) {
         statusEl.textContent = "상품명 추출 실패. (라벨을 더 크게/가까이 찍어줘)";
         return;
@@ -188,8 +165,6 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
 
       renderChips_([product]);
       statusEl.textContent = `OCR 후보: ${product} (탭해서 검색 가능)`;
-
-      // 자동 검색
       lookupJSONP_({ mode: "keyword", keyword: product });
     };
 
@@ -202,21 +177,19 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
       });
     }
 
-    // 라벨이 사진 중앙에 있고 가로로 긴 형태 가정
-    async function cropCenterLabel_(dataUrl) {
+    async function cropCenterLabelCustom_(dataUrl, wRatio, hRatio) {
       return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
           const w = img.width, h = img.height;
-          const cw = Math.floor(w * 0.95);
-          const ch = Math.floor(h * 0.26); // 필요하면 0.22~0.30 사이 조절
+          const cw = Math.floor(w * wRatio);
+          const ch = Math.floor(h * hRatio);
           const sx = Math.floor((w - cw) / 2);
           const sy = Math.floor((h - ch) / 2);
 
           const c = document.createElement("canvas");
           c.width = cw; c.height = ch;
-          const ctx = c.getContext("2d");
-          ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+          c.getContext("2d").drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
           resolve(c.toDataURL("image/png"));
         };
         img.src = dataUrl;
@@ -249,16 +222,65 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
     function cleanOcr_(t) {
       return String(t || "")
         .toUpperCase()
-        .replace(/[^A-Z0-9,\s]/g, " ")
+        .replace(/[^A-Z0-9\-\[\]\s,]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
     }
 
-    // "CHEEKBONE 89,900" -> "CHEEKBONE"
+    async function runOcrBest_(imgUrl) {
+      const cropHeights = [0.22, 0.26, 0.30];   // 라벨 위치 흔들림 대비
+      const thresholds = [150, 170, 190];       // 조명/반사 대비
+
+      let best = { score: -1, text: "" };
+
+      for (const hRatio of cropHeights) {
+        const crop = await cropCenterLabelCustom_(imgUrl, 0.95, hRatio);
+        for (const th of thresholds) {
+          const clean = await binarize_(crop, th);
+
+          const { data: { text } } = await Tesseract.recognize(clean, "eng", {
+            tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-[] ,",
+            tessedit_pageseg_mode: "7"
+          });
+
+          const t = cleanOcr_(text);
+          const s = scoreOcrText_(t);
+          if (s > best.score) best = { score: s, text: t };
+        }
+      }
+      return best;
+    }
+
+    function scoreOcrText_(t) {
+      const s = String(t || "").trim();
+      if (!s) return -1;
+
+      const words = s.match(/[A-Z]{3,}/g) || [];
+      const hasWord = words.length > 0;
+      const len = s.length;
+
+      const digits = (s.match(/[0-9]/g) || []).length;
+      const digitRatio = digits / Math.max(1, len);
+
+      let score = 0;
+      if (hasWord) score += 50;
+      score += Math.min(30, words.join("").length);
+      score += Math.max(0, 30 - Math.abs(len - 18));
+      score -= Math.floor(digitRatio * 40);
+      score -= Math.max(0, len - 60);
+      return score;
+    }
+
     function pickProductNameFromLabel_(ocrText) {
       const up = String(ocrText || "").toUpperCase();
       const tokens = up.match(/[A-Z]{3,}/g) || [];
       if (!tokens.length) return "";
+
+      // HUG HUG 같은 반복 단어
+      if (tokens.length >= 2 && tokens[0] === tokens[1]) {
+        return tokens[0] + " " + tokens[1];
+      }
+
       tokens.sort((a,b) => b.length - a.length);
       return tokens[0];
     }
@@ -292,7 +314,6 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
             return;
           }
 
-          // code 조회(단일)
           if (params.mode === "code") {
             statusEl.textContent = "완료";
             const loc = String(data.location || "").replace(/\s+/g, "");
@@ -313,7 +334,6 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
             return;
           }
 
-          // keyword 검색(목록)
           statusEl.textContent = `완료: ${data.count}개`;
           const rows = data.results || [];
           if (!rows.length) {
@@ -364,4 +384,3 @@ const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_
   </script>
 </body>
 </html>
-
