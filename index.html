@@ -12,15 +12,27 @@
     input[type="text"] { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 180px; }
     input[type="file"] { padding: 10px 0; }
     .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center; }
-    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-    th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; }
-    th { background: #f3f3f3; text-align: left; }
-    table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
     .hint { color:#666; font-size:13px; }
+    .small { font-size: 12px; color: #777; }
     .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
     .chip { padding: 8px 10px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; }
     pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
-    .small { font-size: 12px; color: #777; }
+
+    /* 테이블 */
+    #result { overflow-x: auto; }             /* 모바일에서 가로 스크롤(안전장치) */
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; min-width: 720px; }
+    th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; vertical-align: top; }
+    th { background: #f3f3f3; text-align: left; }
+
+    /* 로케이션은 한 줄 유지 */
+    table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
+
+    /* 비고 컬럼 폭 확보(10글자 내외 기준) + 줄바꿈 허용 */
+    th.note, td.note {
+      min-width: 160px;      /* 10글자 내외면 이 정도가 보기 좋음 */
+      white-space: normal;
+      word-break: keep-all;
+    }
   </style>
 </head>
 <body>
@@ -43,7 +55,7 @@
   <!-- OCR(라벨 사진 업로드) -->
   <div class="box">
     <div><b>라벨 사진(OCR)로 상품명 추출</b></div>
-    <div class="small">팁: 3배 줌 + 글자 크게 + 반사 없게</div>
+    <div class="small">팁: 3배 줌 + 라벨이 화면 중앙 + 글자 크게 + 반사 없게</div>
     <div class="row">
       <input id="photo" type="file" accept="image/*" capture="environment" />
       <button id="btnOcr" disabled>사진 OCR 실행</button>
@@ -138,31 +150,46 @@
     btnOcr.onclick = async () => {
       if (!photoEl.files || !photoEl.files.length) return;
 
+      // 카메라 충돌 방지
       await stopScan_();
-      statusEl.textContent = "OCR 인식 중...";
+
+      statusEl.textContent = "OCR 준비 중...";
       ocrTextEl.textContent = "";
       chipsEl.innerHTML = "";
 
       const file = photoEl.files[0];
       const imgUrl = await fileToDataUrl_(file);
 
-      const { data: { text } } = await Tesseract.recognize(imgUrl, "eng", {
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-[] ,",
-        tessedit_pageseg_mode: "6"
+      // ✅ 라벨 전용: 중앙 가로 길게/세로 얇게 크롭
+      const crop = await cropCenterLabel_(imgUrl);
+
+      // ✅ 대비 강화: 이진화(흑백)
+      const clean = await binarize_(crop, 170);
+
+      statusEl.textContent = "OCR 인식 중(무료, 조금 느릴 수 있음)...";
+
+      // ✅ 한 줄 텍스트 가정 + 영문/숫자/쉼표/공백만 허용
+      const { data: { text } } = await Tesseract.recognize(clean, "eng", {
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789, ",
+        tessedit_pageseg_mode: "7"
       });
 
       const cleaned = cleanOcr_(text);
       ocrTextEl.textContent = cleaned || "(인식 결과 없음)";
 
-      // 첫 영문 토큰 1개만 후보로
-      const token = (cleaned.match(/[A-Z]{3,}/) || [])[0] || "";
-      if (!token) {
-        statusEl.textContent = "OCR 키워드 후보 없음. 텍스트 검색을 사용해줘.";
+      // ✅ 가격 제거 후 상품명 토큰 추출(가장 긴 영문 단어)
+      const product = pickProductNameFromLabel_(cleaned);
+
+      if (!product) {
+        statusEl.textContent = "상품명 추출 실패. (라벨을 더 크게/가까이 찍어줘)";
         return;
       }
 
-      renderChips_([token]);
-      lookupJSONP_({ mode: "keyword", keyword: token });
+      renderChips_([product]);
+      statusEl.textContent = `OCR 후보: ${product} (탭해서 검색 가능)`;
+
+      // 자동 검색
+      lookupJSONP_({ mode: "keyword", keyword: product });
     };
 
     function fileToDataUrl_(file) {
@@ -174,12 +201,65 @@
       });
     }
 
+    // 라벨이 사진 중앙에 있고 가로로 긴 형태 가정
+    async function cropCenterLabel_(dataUrl) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const w = img.width, h = img.height;
+          const cw = Math.floor(w * 0.95);
+          const ch = Math.floor(h * 0.26); // 필요하면 0.22~0.30 사이 조절
+          const sx = Math.floor((w - cw) / 2);
+          const sy = Math.floor((h - ch) / 2);
+
+          const c = document.createElement("canvas");
+          c.width = cw; c.height = ch;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+          resolve(c.toDataURL("image/png"));
+        };
+        img.src = dataUrl;
+      });
+    }
+
+    async function binarize_(dataUrl, threshold = 170) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement("canvas");
+          c.width = img.width; c.height = img.height;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+
+          const im = ctx.getImageData(0, 0, c.width, c.height);
+          const d = im.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const y = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+            const v = y > threshold ? 255 : 0;
+            d[i] = d[i+1] = d[i+2] = v;
+          }
+          ctx.putImageData(im, 0, 0);
+          resolve(c.toDataURL("image/png"));
+        };
+        img.src = dataUrl;
+      });
+    }
+
     function cleanOcr_(t) {
       return String(t || "")
         .toUpperCase()
-        .replace(/[^A-Z0-9\-\[\]\s,]/g, " ")
+        .replace(/[^A-Z0-9,\s]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
+    }
+
+    // "CHEEKBONE 89,900" -> "CHEEKBONE"
+    function pickProductNameFromLabel_(ocrText) {
+      const up = String(ocrText || "").toUpperCase();
+      const tokens = up.match(/[A-Z]{3,}/g) || [];
+      if (!tokens.length) return "";
+      tokens.sort((a,b) => b.length - a.length);
+      return tokens[0];
     }
 
     function renderChips_(arr) {
@@ -219,13 +299,13 @@
 
             resultEl.innerHTML = `
               <table>
-                <thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th><th>비고</th></tr></thead>
+                <thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th><th class="note">비고</th></tr></thead>
                 <tbody>
                   <tr>
                     <td>${esc_(loc)}</td>
                     <td>${esc_(data.name)}</td>
                     <td>${esc_(data.code)}</td>
-                    <td>${esc_(note)}</td>
+                    <td class="note">${esc_(note)}</td>
                   </tr>
                 </tbody>
               </table>`;
@@ -240,11 +320,19 @@
             return;
           }
 
-          let html = "<table><thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th><th>비고</th></tr></thead><tbody>";
+          let html = `<table>
+            <thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th><th class="note">비고</th></tr></thead>
+            <tbody>`;
+
           for (const x of rows) {
             const loc = String(x.location || "").replace(/\s+/g,"");
             const note = String(x.note || "").trim();
-            html += `<tr><td>${esc_(loc)}</td><td>${esc_(x.name)}</td><td>${esc_(x.code)}</td><td>${esc_(note)}</td></tr>`;
+            html += `<tr>
+              <td>${esc_(loc)}</td>
+              <td>${esc_(x.name)}</td>
+              <td>${esc_(x.code)}</td>
+              <td class="note">${esc_(note)}</td>
+            </tr>`;
           }
           html += "</tbody></table>";
           resultEl.innerHTML = html;
