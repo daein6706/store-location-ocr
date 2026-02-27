@@ -20,11 +20,12 @@
     .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
     .chip { padding: 8px 10px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; }
     pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
+    .small { font-size: 12px; color: #777; }
   </style>
 </head>
 <body>
   <h3>로케이션 조회</h3>
-  <div class="hint">1) QR(상품코드) 스캔(가장 정확)  2) 상품명 키워드  3) 사진(OCR)은 보조</div>
+  <div class="hint">1) QR(상품코드)  2) 상품명 키워드  3) 라벨 사진(OCR)은 보조</div>
 
   <!-- QR -->
   <div id="reader"></div>
@@ -39,9 +40,10 @@
     <button id="btnKw">상품명 검색</button>
   </div>
 
-  <!-- OCR(사진 업로드) -->
+  <!-- OCR(라벨 사진 업로드) -->
   <div class="box">
-    <div><b>사진(OCR)로 상품명 추출</b> <span class="hint">(라벨 글자 크게, 반사 없이)</span></div>
+    <div><b>라벨 사진(OCR)로 상품명 추출</b></div>
+    <div class="small">팁: 라벨이 화면 중앙에 오게 + 글자 크게 + 반사 없게</div>
     <div class="row">
       <input id="photo" type="file" accept="image/*" capture="environment" />
       <button id="btnOcr" disabled>사진 OCR 실행</button>
@@ -59,12 +61,12 @@
     <div id="result"></div>
   </div>
 
-  <!-- QR 스캔 + OCR 라이브러리 -->
+  <!-- 라이브러리 -->
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <script>
-    // ✅ 너의 Apps Script 웹앱 URL
+    // ✅ Apps Script 웹앱 URL
     const API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec";
 
     const statusEl = document.getElementById("status");
@@ -77,7 +79,7 @@
     const ocrTextEl = document.getElementById("ocrText");
     const chipsEl = document.getElementById("chips");
 
-    // ---------- QR ----------
+    // ---------------- QR ----------------
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
 
@@ -119,7 +121,7 @@
       scanning = false;
     }
 
-    // ---------- 텍스트 검색 ----------
+    // --------------- 텍스트 검색 ---------------
     document.getElementById("btnKw").onclick = () => {
       const keyword = kwEl.value.trim();
       if (!keyword) return;
@@ -128,7 +130,7 @@
       lookupJSONP_({ mode: "keyword", keyword });
     };
 
-    // ---------- OCR(사진 업로드) ----------
+    // --------------- OCR(라벨 사진) ---------------
     photoEl.addEventListener("change", () => {
       btnOcr.disabled = !photoEl.files || !photoEl.files.length;
       ocrTextEl.textContent = "";
@@ -138,36 +140,46 @@
     btnOcr.onclick = async () => {
       if (!photoEl.files || !photoEl.files.length) return;
 
-      // QR 스캔 중이면 중지(카메라 충돌 방지)
+      // 카메라 충돌 방지: QR 스캔 중이면 중지
       await stopScan_();
 
-      statusEl.textContent = "OCR 인식 중(무료, 조금 느릴 수 있음)...";
+      statusEl.textContent = "OCR 준비 중...";
       ocrTextEl.textContent = "";
       chipsEl.innerHTML = "";
 
       const file = photoEl.files[0];
       const imgUrl = await fileToDataUrl_(file);
 
-      // OCR 옵션: 영문/숫자/기호 위주 라벨에 최적화
-      const { data: { text } } = await Tesseract.recognize(imgUrl, "eng", {
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-[] ",
-        tessedit_pageseg_mode: "6"
+      // 1) 라벨 형식에 맞춰 중앙 가로 길게/세로 얇게 크롭
+      const crop = await cropCenterLabel_(imgUrl);
+
+      // 2) 이진화(흑백)로 대비 올려 정확도 향상
+      const clean = await binarize_(crop, 170);
+
+      statusEl.textContent = "OCR 인식 중(무료, 조금 느릴 수 있음)...";
+
+      // 3) 한 줄 텍스트 + 영문/숫자/콤마만 허용 (예: CHEEKBONE 89,900)
+      const { data: { text } } = await Tesseract.recognize(clean, "eng", {
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789, ",
+        tessedit_pageseg_mode: "7"
       });
 
       const cleaned = cleanOcr_(text);
       ocrTextEl.textContent = cleaned || "(인식 결과 없음)";
 
-      const candidates = extractCandidates_(cleaned);
-      if (!candidates.length) {
-        statusEl.textContent = "OCR 키워드 후보를 못 찾았어. 텍스트 검색을 써줘.";
+      // 4) 가격 제거 후 상품명 후보 1개 추출
+      const product = pickProductNameFromLabel_(cleaned);
+
+      if (!product) {
+        statusEl.textContent = "상품명 추출 실패. 텍스트 검색을 사용해줘.";
         return;
       }
 
-      renderChips_(candidates);
-      statusEl.textContent = "OCR 후보 생성됨. 칩을 눌러 검색해봐.";
+      renderChips_([product]);
+      statusEl.textContent = `OCR 후보: ${product} (탭해서 검색 가능)`;
 
-      // 자동으로 1번 후보 검색(원치 않으면 아래 한 줄 지워도 됨)
-      lookupJSONP_({ mode: "keyword", keyword: candidates[0] });
+      // 자동 검색
+      lookupJSONP_({ mode: "keyword", keyword: product });
     };
 
     function fileToDataUrl_(file) {
@@ -179,31 +191,69 @@
       });
     }
 
+    // 라벨이 사진 중앙에 있고 가로로 긴 형태 가정
+    async function cropCenterLabel_(dataUrl) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const w = img.width, h = img.height;
+          const cw = Math.floor(w * 0.95);
+          const ch = Math.floor(h * 0.26); // 필요시 0.22~0.30 조절
+          const sx = Math.floor((w - cw) / 2);
+          const sy = Math.floor((h - ch) / 2);
+
+          const c = document.createElement("canvas");
+          c.width = cw; c.height = ch;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+          resolve(c.toDataURL("image/png"));
+        };
+        img.src = dataUrl;
+      });
+    }
+
+    async function binarize_(dataUrl, threshold = 170) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement("canvas");
+          c.width = img.width; c.height = img.height;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+
+          const im = ctx.getImageData(0, 0, c.width, c.height);
+          const d = im.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const y = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+            const v = y > threshold ? 255 : 0;
+            d[i] = d[i+1] = d[i+2] = v;
+          }
+          ctx.putImageData(im, 0, 0);
+          resolve(c.toDataURL("image/png"));
+        };
+        img.src = dataUrl;
+      });
+    }
+
     function cleanOcr_(t) {
       return String(t || "")
         .toUpperCase()
-        .replace(/[^A-Z0-9\-\[\]\s]/g, " ")
+        .replace(/[^A-Z0-9,\s]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
     }
 
-    function extractCandidates_(t) {
-      const up = String(t || "").toUpperCase();
-      const out = [];
+    // "CHEEKBONE 89,900" -> "CHEEKBONE"
+    function pickProductNameFromLabel_(ocrText) {
+      const up = String(ocrText || "").toUpperCase();
 
-      // [ 앞 토큰 우선 (예: "AERO [BLACK-OPTICAL]")
-      const head = up.split("[")[0].trim();
-      const headTok = head.split(/\s+/).filter(Boolean)[0];
-      if (headTok && /^[A-Z0-9\-]{3,}$/.test(headTok)) out.push(headTok);
+      // 영문 단어만 뽑기(숫자/가격 제거)
+      const tokens = up.match(/[A-Z]{3,}/g) || [];
+      if (!tokens.length) return "";
 
-      // 전체 토큰 후보 수집
-      const toks = up.match(/[A-Z0-9][A-Z0-9\-]{2,}/g) || [];
-      for (const x of toks) {
-        if (["MADE", "IN", "KOREA", "COLOR"].includes(x)) continue;
-        if (!out.includes(x)) out.push(x);
-      }
-
-      return out.slice(0, 8);
+      // 보통 상품명은 가장 긴 단어
+      tokens.sort((a,b) => b.length - a.length);
+      return tokens[0];
     }
 
     function renderChips_(arr) {
@@ -217,7 +267,7 @@
       });
     }
 
-    // ---------- JSONP 호출 (CORS 회피) ----------
+    // ---------------- JSONP 호출 (CORS 회피) ----------------
     function lookupJSONP_(params) {
       const cb = "__cb_" + Math.random().toString(36).slice(2);
       let script;
