@@ -6,7 +6,9 @@
   <title>로케이션 조회 (QR/텍스트/OCR)</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
-    #reader { width: 100%; max-width: 520px; }
+    /* ✅ reader가 커져서 스크롤 길어지는 것 방지 */
+    #reader { width: 100%; max-width: 520px; max-height: 320px; overflow: hidden; }
+
     .box { margin-top: 12px; padding: 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
     button { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; }
     input[type="text"] { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 180px; }
@@ -75,7 +77,6 @@
     <div id="result"></div>
   </div>
 
-  <!-- 라이브러리 -->
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
@@ -87,11 +88,9 @@
     const resultEl = document.getElementById("result");
     const kwEl = document.getElementById("kw");
 
-    // QR 사진 업로드
     const qrPhotoEl = document.getElementById("qrPhoto");
     const btnQrPhoto = document.getElementById("btnQrPhoto");
 
-    // 라벨 OCR
     const photoEl = document.getElementById("photo");
     const btnOcr = document.getElementById("btnOcr");
     const ocrTextEl = document.getElementById("ocrText");
@@ -139,7 +138,7 @@
       scanning = false;
     }
 
-    // ---------- QR 사진 업로드 (핵심: scanFile만 사용) ----------
+    // ---------- QR 사진 업로드 (✅ showImage=false로 스크롤 문제 제거) ----------
     qrPhotoEl.addEventListener("change", () => {
       btnQrPhoto.disabled = !qrPhotoEl.files || !qrPhotoEl.files.length;
     });
@@ -147,16 +146,15 @@
     btnQrPhoto.onclick = async () => {
       if (!qrPhotoEl.files || !qrPhotoEl.files.length) return;
 
-      await stopScan_(); // 카메라 충돌 방지
+      await stopScan_();
       statusEl.textContent = "QR 사진 스캔 중...";
       resultEl.innerHTML = "";
 
       const file = qrPhotoEl.files[0];
 
       try {
-        // html5-qrcode의 file scan은 인식률이 비교적 좋음
         const scanner = new Html5Qrcode("reader");
-        const decodedText = await scanner.scanFile(file, true); // showImage=true
+        const decodedText = await scanner.scanFile(file, false); // ✅ false
         const code = String(decodedText || "").trim();
         if (!code) throw new Error("empty");
 
@@ -177,7 +175,7 @@
       lookupJSONP_({ mode: "keyword", keyword });
     };
 
-    // ---------- 라벨 OCR (현재 잘 되는 방식 유지: 크롭+이진화+PSM7) ----------
+    // ---------- 라벨 OCR ----------
     photoEl.addEventListener("change", () => {
       btnOcr.disabled = !photoEl.files || !photoEl.files.length;
       ocrTextEl.textContent = "";
