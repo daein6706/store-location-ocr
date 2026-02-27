@@ -77,7 +77,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <script>
-    const API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec";
+    const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec"; 
+const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
 
     const statusEl = document.getElementById("status");
     const codeEl = document.getElementById("code");
@@ -363,3 +364,4 @@
   </script>
 </body>
 </html>
+
