@@ -18,32 +18,35 @@
     .chip { padding: 8px 10px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; }
     pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
 
-    /* 테이블 */
-    #result { overflow-x: auto; }             /* 모바일에서 가로 스크롤(안전장치) */
+    /* 결과 테이블 */
+    #result { overflow-x: auto; }
     table { border-collapse: collapse; width: 100%; margin-top: 10px; min-width: 720px; }
     th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; vertical-align: top; }
     th { background: #f3f3f3; text-align: left; }
-
-    /* 로케이션은 한 줄 유지 */
     table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
-
-    /* 비고 컬럼 폭 확보(10글자 내외 기준) + 줄바꿈 허용 */
-    th.note, td.note {
-      min-width: 160px;      /* 10글자 내외면 이 정도가 보기 좋음 */
-      white-space: normal;
-      word-break: keep-all;
-    }
+    th.note, td.note { min-width: 160px; white-space: normal; word-break: keep-all; }
   </style>
 </head>
 <body>
   <h3>로케이션 조회</h3>
   <div class="hint">QR(상품코드) / 상품명 키워드 / 라벨 사진(OCR)은 보조</div>
 
-  <!-- QR -->
+  <!-- QR 실시간 -->
   <div id="reader"></div>
   <div class="row">
-    <button id="btnStart">QR 스캔 시작</button>
-    <button id="btnStop">QR 스캔 중지</button>
+    <button id="btnStart">QR 실시간 스캔 시작</button>
+    <button id="btnStop">QR 실시간 스캔 중지</button>
+  </div>
+
+  <!-- QR 사진 업로드 -->
+  <div class="box">
+    <div><b>QR 사진 업로드로 스캔</b></div>
+    <div class="small">팁: 3배 줌으로 QR을 크게 찍고 업로드하면 인식률↑</div>
+    <div class="row">
+      <input id="qrPhoto" type="file" accept="image/*" capture="environment" />
+      <button id="btnQrPhoto" disabled>QR 사진 스캔</button>
+    </div>
+    <div class="small">스캔된 상품코드: <span id="qrPhotoCode"></span></div>
   </div>
 
   <!-- 텍스트 검색 -->
@@ -52,13 +55,13 @@
     <button id="btnKw">상품명 검색</button>
   </div>
 
-  <!-- OCR(라벨 사진 업로드) -->
+  <!-- 상품명 OCR(라벨) -->
   <div class="box">
     <div><b>라벨 사진(OCR)로 상품명 추출</b></div>
-    <div class="small">팁: 3배 줌 + 라벨이 화면 중앙 + 글자 크게 + 반사 없게</div>
+    <div class="small">팁: 3배 줌 + 라벨 중앙 + 글자 크게 + 반사 없게</div>
     <div class="row">
       <input id="photo" type="file" accept="image/*" capture="environment" />
-      <button id="btnOcr" disabled>사진 OCR 실행</button>
+      <button id="btnOcr" disabled>라벨 OCR 실행</button>
     </div>
     <div><b>OCR 텍스트:</b></div>
     <pre id="ocrText"></pre>
@@ -73,8 +76,10 @@
     <div id="result"></div>
   </div>
 
+  <!-- 라이브러리 -->
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
   <script>
     const API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec";
@@ -84,12 +89,18 @@
     const resultEl = document.getElementById("result");
     const kwEl = document.getElementById("kw");
 
+    // QR 사진 업로드
+    const qrPhotoEl = document.getElementById("qrPhoto");
+    const btnQrPhoto = document.getElementById("btnQrPhoto");
+    const qrPhotoCodeEl = document.getElementById("qrPhotoCode");
+
+    // 라벨 OCR
     const photoEl = document.getElementById("photo");
     const btnOcr = document.getElementById("btnOcr");
     const ocrTextEl = document.getElementById("ocrText");
     const chipsEl = document.getElementById("chips");
 
-    // ---------- QR ----------
+    // ---------- QR 실시간 ----------
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
 
@@ -131,6 +142,55 @@
       scanning = false;
     }
 
+    // ---------- QR 사진 업로드 ----------
+    qrPhotoEl.addEventListener("change", () => {
+      btnQrPhoto.disabled = !qrPhotoEl.files || !qrPhotoEl.files.length;
+      qrPhotoCodeEl.textContent = "";
+    });
+
+    btnQrPhoto.onclick = async () => {
+      if (!qrPhotoEl.files || !qrPhotoEl.files.length) return;
+
+      // 카메라 충돌 방지
+      await stopScan_();
+
+      statusEl.textContent = "QR 사진 분석 중...";
+      qrPhotoCodeEl.textContent = "";
+      resultEl.innerHTML = "";
+
+      const file = qrPhotoEl.files[0];
+      const dataUrl = await fileToDataUrl_(file);
+
+      const decoded = await decodeQrFromImage_(dataUrl);
+      if (!decoded) {
+        statusEl.textContent = "QR 인식 실패(더 크게/선명하게 찍어줘)";
+        return;
+      }
+
+      const code = decoded.trim();
+      qrPhotoCodeEl.textContent = code;
+      codeEl.textContent = code;
+      statusEl.textContent = "QR 인식 완료 → 코드 조회 중...";
+      lookupJSONP_({ mode: "code", code });
+    };
+
+    async function decodeQrFromImage_(dataUrl) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement("canvas");
+          c.width = img.width; c.height = img.height;
+          const ctx = c.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+
+          const imageData = ctx.getImageData(0, 0, c.width, c.height);
+          const code = jsQR(imageData.data, c.width, c.height);
+          resolve(code ? code.data : "");
+        };
+        img.src = dataUrl;
+      });
+    }
+
     // ---------- 텍스트 검색 ----------
     document.getElementById("btnKw").onclick = () => {
       const keyword = kwEl.value.trim();
@@ -140,7 +200,7 @@
       lookupJSONP_({ mode: "keyword", keyword });
     };
 
-    // ---------- OCR ----------
+    // ---------- 라벨 OCR ----------
     photoEl.addEventListener("change", () => {
       btnOcr.disabled = !photoEl.files || !photoEl.files.length;
       ocrTextEl.textContent = "";
@@ -150,7 +210,6 @@
     btnOcr.onclick = async () => {
       if (!photoEl.files || !photoEl.files.length) return;
 
-      // 카메라 충돌 방지
       await stopScan_();
 
       statusEl.textContent = "OCR 준비 중...";
@@ -160,15 +219,11 @@
       const file = photoEl.files[0];
       const imgUrl = await fileToDataUrl_(file);
 
-      // ✅ 라벨 전용: 중앙 가로 길게/세로 얇게 크롭
       const crop = await cropCenterLabel_(imgUrl);
-
-      // ✅ 대비 강화: 이진화(흑백)
       const clean = await binarize_(crop, 170);
 
-      statusEl.textContent = "OCR 인식 중(무료, 조금 느릴 수 있음)...";
+      statusEl.textContent = "OCR 인식 중...";
 
-      // ✅ 한 줄 텍스트 가정 + 영문/숫자/쉼표/공백만 허용
       const { data: { text } } = await Tesseract.recognize(clean, "eng", {
         tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789, ",
         tessedit_pageseg_mode: "7"
@@ -177,18 +232,14 @@
       const cleaned = cleanOcr_(text);
       ocrTextEl.textContent = cleaned || "(인식 결과 없음)";
 
-      // ✅ 가격 제거 후 상품명 토큰 추출(가장 긴 영문 단어)
       const product = pickProductNameFromLabel_(cleaned);
-
       if (!product) {
-        statusEl.textContent = "상품명 추출 실패. (라벨을 더 크게/가까이 찍어줘)";
+        statusEl.textContent = "상품명 추출 실패(라벨을 더 크게 찍어줘)";
         return;
       }
 
       renderChips_([product]);
-      statusEl.textContent = `OCR 후보: ${product} (탭해서 검색 가능)`;
-
-      // 자동 검색
+      statusEl.textContent = `OCR 후보: ${product}`;
       lookupJSONP_({ mode: "keyword", keyword: product });
     };
 
@@ -201,14 +252,13 @@
       });
     }
 
-    // 라벨이 사진 중앙에 있고 가로로 긴 형태 가정
     async function cropCenterLabel_(dataUrl) {
       return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
           const w = img.width, h = img.height;
           const cw = Math.floor(w * 0.95);
-          const ch = Math.floor(h * 0.26); // 필요하면 0.22~0.30 사이 조절
+          const ch = Math.floor(h * 0.26);
           const sx = Math.floor((w - cw) / 2);
           const sy = Math.floor((h - ch) / 2);
 
@@ -253,7 +303,6 @@
         .trim();
     }
 
-    // "CHEEKBONE 89,900" -> "CHEEKBONE"
     function pickProductNameFromLabel_(ocrText) {
       const up = String(ocrText || "").toUpperCase();
       const tokens = up.match(/[A-Z]{3,}/g) || [];
@@ -291,7 +340,6 @@
             return;
           }
 
-          // code 조회(단일)
           if (params.mode === "code") {
             statusEl.textContent = "완료";
             const loc = String(data.location || "").replace(/\s+/g, "");
@@ -312,7 +360,6 @@
             return;
           }
 
-          // keyword 검색(목록)
           statusEl.textContent = `완료: ${data.count}개`;
           const rows = data.results || [];
           if (!rows.length) {
