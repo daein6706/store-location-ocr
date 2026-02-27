@@ -3,45 +3,51 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>QR 로케이션 조회</title>
+  <title>QR/텍스트 로케이션 조회</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
     #reader { width: 100%; max-width: 520px; }
     .box { margin-top: 12px; padding: 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
     button { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; }
-    .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+    input { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 180px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center; }
     table { border-collapse: collapse; width: 100%; margin-top: 10px; }
     th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; }
     th { background: #f3f3f3; text-align: left; }
-    table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; } /* 로케이션 줄바꿈 방지 */
+    table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
+    .hint { color:#666; font-size:13px; }
   </style>
 </head>
 <body>
-  <h3>상품코드 QR 스캔 → 로케이션 조회</h3>
+  <h3>로케이션 조회</h3>
+  <div class="hint">QR(상품코드) 스캔 또는 상품명 키워드(AERO 등)로 검색</div>
 
   <div id="reader"></div>
 
   <div class="row">
-    <button id="btnStart">스캔 시작</button>
-    <button id="btnStop">스캔 중지</button>
+    <button id="btnStart">QR 스캔 시작</button>
+    <button id="btnStop">QR 스캔 중지</button>
+  </div>
+
+  <div class="row">
+    <input id="kw" placeholder="상품명 키워드 (예: AERO)" />
+    <button id="btnKw">상품명 검색</button>
   </div>
 
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
-    <div><b>스캔 코드:</b> <span id="code"></span></div>
+    <div><b>코드:</b> <span id="code"></span></div>
     <div id="result"></div>
   </div>
 
-  <!-- QR 스캔 라이브러리(무료) -->
   <script src="https://unpkg.com/html5-qrcode"></script>
-
   <script>
-    // ✅ 너의 Apps Script 웹앱 URL
     const API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec";
 
     const statusEl = document.getElementById("status");
     const codeEl = document.getElementById("code");
     const resultEl = document.getElementById("result");
+    const kwEl = document.getElementById("kw");
 
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
@@ -57,19 +63,14 @@
           { facingMode: "environment" },
           { fps: 10, qrbox: { width: 250, height: 250 } },
           async (decodedText) => {
-            statusEl.textContent = "스캔 완료 → 조회 중...";
             const code = decodedText.trim();
             codeEl.textContent = code;
-
-            // 중복 스캔 방지: 일단 멈추고 조회
+            statusEl.textContent = "스캔 완료 → 코드 조회 중...";
             await stopScan_();
-
-            // Apps Script 호출 (GitHub Pages라 CORS 회피 위해 JSONP 사용)
-            lookupByCodeJSONP_(code);
+            lookupJSONP_({ mode: "code", code });
           },
-          (err) => { /* 무시 가능 */ }
+          () => {}
         );
-
         statusEl.textContent = "스캔 중... QR을 박스 안에 맞춰줘";
       } catch (e) {
         scanning = false;
@@ -82,6 +83,14 @@
       statusEl.textContent = "중지";
     };
 
+    document.getElementById("btnKw").onclick = () => {
+      const keyword = kwEl.value.trim();
+      if (!keyword) return;
+      codeEl.textContent = "";
+      statusEl.textContent = "상품명 검색 중...";
+      lookupJSONP_({ mode: "keyword", keyword });
+    };
+
     async function stopScan_() {
       if (!scanning) return;
       try { await html5QrCode.stop(); } catch(e) {}
@@ -89,12 +98,12 @@
       scanning = false;
     }
 
-    function lookupByCodeJSONP_(code) {
-      statusEl.textContent = "조회 중: " + code;
-
+    function lookupJSONP_(params) {
       const cb = "__cb_" + Math.random().toString(36).slice(2);
-      const cleanup = (script) => {
-        delete window[cb];
+      let script;
+
+      const cleanup = () => {
+        try { delete window[cb]; } catch(e) {}
         if (script && script.parentNode) script.parentNode.removeChild(script);
       };
 
@@ -106,37 +115,58 @@
             return;
           }
 
-          statusEl.textContent = "완료";
-          const loc = String(data.location || "").replace(/\s+/g, "");
+          // 코드 조회(단일)
+          if (params.mode === "code") {
+            statusEl.textContent = "완료";
+            const loc = String(data.location || "").replace(/\s+/g, "");
+            resultEl.innerHTML = `
+              <table>
+                <thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td>${esc_(loc)}</td>
+                    <td>${esc_(data.name)}</td>
+                    <td>${esc_(data.code)}</td>
+                  </tr>
+                </tbody>
+              </table>`;
+            return;
+          }
 
-          resultEl.innerHTML = `
-            <table>
-              <thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th></tr></thead>
-              <tbody>
-                <tr>
-                  <td>${escapeHtml_(loc)}</td>
-                  <td>${escapeHtml_(data.name)}</td>
-                  <td>${escapeHtml_(data.code)}</td>
-                </tr>
-              </tbody>
-            </table>
-          `;
+          // 상품명 검색(목록)
+          statusEl.textContent = `완료: ${data.count}개`;
+          const rows = data.results || [];
+          if (!rows.length) {
+            resultEl.innerHTML = "<div class='hint'>일치 결과 없음</div>";
+            return;
+          }
+
+          let html = "<table><thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th></tr></thead><tbody>";
+          for (const x of rows) {
+            const loc = String(x.location || "").replace(/\s+/g,"");
+            html += `<tr><td>${esc_(loc)}</td><td>${esc_(x.name)}</td><td>${esc_(x.code)}</td></tr>`;
+          }
+          html += "</tbody></table>";
+          resultEl.innerHTML = html;
+
         } finally {
-          cleanup(script);
+          cleanup();
         }
       };
 
-      const url = `${API_BASE}?code=${encodeURIComponent(code)}&callback=${encodeURIComponent(cb)}`;
-      const script = document.createElement("script");
+      const qs = new URLSearchParams({ ...params, callback: cb }).toString();
+      const url = `${API_BASE}?${qs}`;
+
+      script = document.createElement("script");
       script.src = url;
       script.onerror = () => {
-        statusEl.textContent = "조회 실패: 네트워크/권한 문제";
-        cleanup(script);
+        statusEl.textContent = "네트워크/권한 문제 (Apps Script 호출 실패)";
+        cleanup();
       };
       document.body.appendChild(script);
     }
 
-    function escapeHtml_(s) {
+    function esc_(s) {
       return String(s ?? "")
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
