@@ -96,7 +96,7 @@
       try {
         await html5QrCode.start(
           { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
+          { fps: 10, qrbox: { width: 320, height: 320 } },
           async (decodedText) => {
             const raw = decodedText.trim();
 
@@ -438,3 +438,4 @@
   </script>
 </body>
 </html>
+
