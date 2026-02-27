@@ -3,45 +3,68 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>QR/텍스트 로케이션 조회</title>
+  <title>로케이션 조회 (QR/텍스트/OCR)</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
     #reader { width: 100%; max-width: 520px; }
     .box { margin-top: 12px; padding: 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
     button { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; }
-    input { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 180px; }
+    input[type="text"] { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 180px; }
+    input[type="file"] { padding: 10px 0; }
     .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center; }
     table { border-collapse: collapse; width: 100%; margin-top: 10px; }
     th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; }
     th { background: #f3f3f3; text-align: left; }
     table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
     .hint { color:#666; font-size:13px; }
+    .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    .chip { padding: 8px 10px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; }
+    pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
   </style>
 </head>
 <body>
   <h3>로케이션 조회</h3>
-  <div class="hint">QR(상품코드) 스캔 또는 상품명 키워드(AERO 등)로 검색</div>
+  <div class="hint">1) QR(상품코드) 스캔(가장 정확)  2) 상품명 키워드  3) 사진(OCR)은 보조</div>
 
+  <!-- QR -->
   <div id="reader"></div>
-
   <div class="row">
     <button id="btnStart">QR 스캔 시작</button>
     <button id="btnStop">QR 스캔 중지</button>
   </div>
 
+  <!-- 텍스트 검색 -->
   <div class="row">
-    <input id="kw" placeholder="상품명 키워드 (예: AERO)" />
+    <input id="kw" type="text" placeholder="상품명 키워드 (예: AERO)" />
     <button id="btnKw">상품명 검색</button>
   </div>
 
+  <!-- OCR(사진 업로드) -->
+  <div class="box">
+    <div><b>사진(OCR)로 상품명 추출</b> <span class="hint">(라벨 글자 크게, 반사 없이)</span></div>
+    <div class="row">
+      <input id="photo" type="file" accept="image/*" capture="environment" />
+      <button id="btnOcr" disabled>사진 OCR 실행</button>
+    </div>
+    <div><b>OCR 텍스트:</b></div>
+    <pre id="ocrText"></pre>
+    <div><b>키워드 후보(탭해서 검색):</b></div>
+    <div class="chips" id="chips"></div>
+  </div>
+
+  <!-- 결과 -->
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
     <div><b>코드:</b> <span id="code"></span></div>
     <div id="result"></div>
   </div>
 
+  <!-- QR 스캔 + OCR 라이브러리 -->
   <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
   <script>
+    // ✅ 너의 Apps Script 웹앱 URL
     const API_BASE = "https://script.google.com/macros/s/AKfycbxb4ml2a21fRCe_4ooK6qdZtlU1qoErKHVHxCGUyAsLgasPNDHBLtyayftg6qIUvYFMfA/exec";
 
     const statusEl = document.getElementById("status");
@@ -49,6 +72,12 @@
     const resultEl = document.getElementById("result");
     const kwEl = document.getElementById("kw");
 
+    const photoEl = document.getElementById("photo");
+    const btnOcr = document.getElementById("btnOcr");
+    const ocrTextEl = document.getElementById("ocrText");
+    const chipsEl = document.getElementById("chips");
+
+    // ---------- QR ----------
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
 
@@ -83,6 +112,14 @@
       statusEl.textContent = "중지";
     };
 
+    async function stopScan_() {
+      if (!scanning) return;
+      try { await html5QrCode.stop(); } catch(e) {}
+      try { html5QrCode.clear(); } catch(e) {}
+      scanning = false;
+    }
+
+    // ---------- 텍스트 검색 ----------
     document.getElementById("btnKw").onclick = () => {
       const keyword = kwEl.value.trim();
       if (!keyword) return;
@@ -91,13 +128,96 @@
       lookupJSONP_({ mode: "keyword", keyword });
     };
 
-    async function stopScan_() {
-      if (!scanning) return;
-      try { await html5QrCode.stop(); } catch(e) {}
-      try { html5QrCode.clear(); } catch(e) {}
-      scanning = false;
+    // ---------- OCR(사진 업로드) ----------
+    photoEl.addEventListener("change", () => {
+      btnOcr.disabled = !photoEl.files || !photoEl.files.length;
+      ocrTextEl.textContent = "";
+      chipsEl.innerHTML = "";
+    });
+
+    btnOcr.onclick = async () => {
+      if (!photoEl.files || !photoEl.files.length) return;
+
+      // QR 스캔 중이면 중지(카메라 충돌 방지)
+      await stopScan_();
+
+      statusEl.textContent = "OCR 인식 중(무료, 조금 느릴 수 있음)...";
+      ocrTextEl.textContent = "";
+      chipsEl.innerHTML = "";
+
+      const file = photoEl.files[0];
+      const imgUrl = await fileToDataUrl_(file);
+
+      // OCR 옵션: 영문/숫자/기호 위주 라벨에 최적화
+      const { data: { text } } = await Tesseract.recognize(imgUrl, "eng", {
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-[] ",
+        tessedit_pageseg_mode: "6"
+      });
+
+      const cleaned = cleanOcr_(text);
+      ocrTextEl.textContent = cleaned || "(인식 결과 없음)";
+
+      const candidates = extractCandidates_(cleaned);
+      if (!candidates.length) {
+        statusEl.textContent = "OCR 키워드 후보를 못 찾았어. 텍스트 검색을 써줘.";
+        return;
+      }
+
+      renderChips_(candidates);
+      statusEl.textContent = "OCR 후보 생성됨. 칩을 눌러 검색해봐.";
+
+      // 자동으로 1번 후보 검색(원치 않으면 아래 한 줄 지워도 됨)
+      lookupJSONP_({ mode: "keyword", keyword: candidates[0] });
+    };
+
+    function fileToDataUrl_(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
     }
 
+    function cleanOcr_(t) {
+      return String(t || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9\-\[\]\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function extractCandidates_(t) {
+      const up = String(t || "").toUpperCase();
+      const out = [];
+
+      // [ 앞 토큰 우선 (예: "AERO [BLACK-OPTICAL]")
+      const head = up.split("[")[0].trim();
+      const headTok = head.split(/\s+/).filter(Boolean)[0];
+      if (headTok && /^[A-Z0-9\-]{3,}$/.test(headTok)) out.push(headTok);
+
+      // 전체 토큰 후보 수집
+      const toks = up.match(/[A-Z0-9][A-Z0-9\-]{2,}/g) || [];
+      for (const x of toks) {
+        if (["MADE", "IN", "KOREA", "COLOR"].includes(x)) continue;
+        if (!out.includes(x)) out.push(x);
+      }
+
+      return out.slice(0, 8);
+    }
+
+    function renderChips_(arr) {
+      chipsEl.innerHTML = "";
+      arr.forEach(k => {
+        const el = document.createElement("div");
+        el.className = "chip";
+        el.textContent = k;
+        el.onclick = () => lookupJSONP_({ mode: "keyword", keyword: k });
+        chipsEl.appendChild(el);
+      });
+    }
+
+    // ---------- JSONP 호출 (CORS 회피) ----------
     function lookupJSONP_(params) {
       const cb = "__cb_" + Math.random().toString(36).slice(2);
       let script;
@@ -115,7 +235,6 @@
             return;
           }
 
-          // 코드 조회(단일)
           if (params.mode === "code") {
             statusEl.textContent = "완료";
             const loc = String(data.location || "").replace(/\s+/g, "");
@@ -133,7 +252,7 @@
             return;
           }
 
-          // 상품명 검색(목록)
+          // keyword 검색 결과(목록)
           statusEl.textContent = `완료: ${data.count}개`;
           const rows = data.results || [];
           if (!rows.length) {
@@ -143,7 +262,7 @@
 
           let html = "<table><thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th></tr></thead><tbody>";
           for (const x of rows) {
-            const loc = String(x.location || "").replace(/\s+/g,"");
+            const loc = String(x.location || "").replace(/\s+/g, "");
             html += `<tr><td>${esc_(loc)}</td><td>${esc_(x.name)}</td><td>${esc_(x.code)}</td></tr>`;
           }
           html += "</tbody></table>";
