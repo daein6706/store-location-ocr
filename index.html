@@ -25,11 +25,28 @@
     th { background: #f3f3f3; text-align: left; }
     table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
     th.note, td.note { min-width: 160px; white-space: normal; word-break: keep-all; }
+
+    .pill {
+      display:inline-flex; align-items:center; gap:6px;
+      padding:6px 10px; border:1px solid #ddd; border-radius:999px; background:#fff;
+      font-size:13px; color:#333;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
   </style>
 </head>
 <body>
   <h3>로케이션 조회</h3>
   <div class="hint">QR(상품코드/스타일키) / 상품명 키워드 / 코드 라벨 사진(OCR)</div>
+
+  <!-- 누적 컨트롤(추가) -->
+  <div class="row">
+    <span class="pill">모드: <b id="accLabel">누적 ON</b></span>
+    <button id="btnToggleAcc">누적 ON/OFF</button>
+    <button id="btnClearAcc">전체 초기화</button>
+  </div>
+  <div class="small">
+    누적 ON: 검색/스캔 결과가 계속 추가됩니다(같은 키 재검색 시 갱신). / OFF: 기존처럼 단일 결과만 표시.
+  </div>
 
   <!-- QR -->
   <div id="reader"></div>
@@ -61,7 +78,7 @@
   <!-- 결과 -->
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
-    <div><b>코드:</b> <span id="code"></span></div>
+    <div><b>코드:</b> <span id="code" class="mono"></span></div>
     <div id="result"></div>
   </div>
 
@@ -83,7 +100,122 @@
     const ocrTextEl = document.getElementById("ocrText");
     const chipsEl = document.getElementById("chips");
 
-    // ----- QR -----
+    // =========================
+    // ✅ 누적(다중검색) 상태
+    // =========================
+    let ACC_MODE = true; // 기본: 누적 ON
+    const accLabelEl = document.getElementById("accLabel");
+    const btnToggleAcc = document.getElementById("btnToggleAcc");
+    const btnClearAcc = document.getElementById("btnClearAcc");
+
+    // 누적 결과: key별로 rows 저장
+    // accMap: key -> { key, mode, query, rows:[{location,name,code,note}] }
+    const accMap = new Map();
+    const accOrder = []; // key 표시 순서
+
+    function setAccLabel_() {
+      accLabelEl.textContent = ACC_MODE ? "누적 ON" : "누적 OFF";
+    }
+    setAccLabel_();
+
+    btnToggleAcc.onclick = () => {
+      ACC_MODE = !ACC_MODE;
+      setAccLabel_();
+      // 누적 OFF로 바꾸면 화면은 "최근 단일 결과"로만 보이게 하는 게 자연스러운데,
+      // 지금은 기존 결과 유지. (원하면 OFF 전환 시 result 초기화하도록 바꿀 수 있음)
+      statusEl.textContent = ACC_MODE ? "누적 모드 ON" : "누적 모드 OFF";
+      if (ACC_MODE) renderAccumulated_();
+    };
+
+    btnClearAcc.onclick = () => {
+      accMap.clear();
+      accOrder.length = 0;
+      resultEl.innerHTML = "<div class='hint'>누적 결과 없음</div>";
+      statusEl.textContent = "초기화 완료";
+      codeEl.textContent = "";
+    };
+
+    function upsertAcc_(key, mode, query, rows) {
+      if (!accMap.has(key)) accOrder.push(key);
+      accMap.set(key, { key, mode, query, rows });
+    }
+
+    function removeAcc_(key) {
+      accMap.delete(key);
+      const idx = accOrder.indexOf(key);
+      if (idx >= 0) accOrder.splice(idx, 1);
+    }
+
+    function renderAccumulated_() {
+      if (!accOrder.length) {
+        resultEl.innerHTML = "<div class='hint'>누적 결과 없음</div>";
+        return;
+      }
+
+      // 누적 rows 펼치기
+      const flat = [];
+      for (const key of accOrder) {
+        const entry = accMap.get(key);
+        if (!entry) continue;
+        for (const r of entry.rows) {
+          flat.push({ key, ...r });
+        }
+      }
+
+      // 테이블 렌더 (검색키 컬럼 추가)
+      let html = `
+        <div class="small">누적 항목: <b>${accOrder.length}개</b> (키를 다시 스캔/검색하면 해당 항목이 갱신됩니다)</div>
+        <table>
+          <thead>
+            <tr>
+              <th>검색키</th>
+              <th>로케이션</th>
+              <th>상품명</th>
+              <th>상품코드</th>
+              <th class="note">비고</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      for (const r of flat) {
+        const loc = String(r.location || "").replace(/\s+/g, "");
+        html += `
+          <tr>
+            <td class="mono">${esc_(r.key)}</td>
+            <td>${esc_(loc)}</td>
+            <td>${esc_(r.name || "")}</td>
+            <td class="mono">${esc_(r.code || "")}</td>
+            <td class="note">${esc_(r.note || "")}</td>
+          </tr>
+        `;
+      }
+
+      html += "</tbody></table>";
+
+      // 키 삭제 버튼(간단 UI)
+      html += `<div class="row" style="margin-top:8px;">`;
+      for (const key of accOrder) {
+        html += `<button data-delkey="${escAttr_(key)}">삭제: ${esc_(key)}</button>`;
+      }
+      html += `</div>`;
+
+      resultEl.innerHTML = html;
+
+      // 삭제 버튼 이벤트 바인딩
+      resultEl.querySelectorAll("button[data-delkey]").forEach(btn => {
+        btn.onclick = () => {
+          const k = btn.getAttribute("data-delkey");
+          removeAcc_(k);
+          renderAccumulated_();
+          statusEl.textContent = "삭제됨: " + k;
+        };
+      });
+    }
+
+    // =========================
+    // QR
+    // =========================
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
 
@@ -91,7 +223,7 @@
       if (scanning) return;
       scanning = true;
       statusEl.textContent = "카메라 시작...";
-      resultEl.innerHTML = "";
+      if (!ACC_MODE) resultEl.innerHTML = ""; // 누적 OFF면 초기화 느낌
 
       try {
         await html5QrCode.start(
@@ -100,7 +232,6 @@
           async (decodedText) => {
             const raw = decodedText.trim();
 
-            // ✅ QR 내용에 따라 분기:
             // - K:FEZ   => 키워드 검색(컬러 여러개 한번에)
             // - C:DL2.. => 코드 단건 조회
             // - 접두어 없으면 자동 판별
@@ -109,7 +240,7 @@
               codeEl.textContent = keyword;
               statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "keyword", keyword });
+              lookupJSONP_({ mode: "keyword", keyword, _accKey: "K:" + keyword });
               return;
             }
 
@@ -118,24 +249,23 @@
               codeEl.textContent = code;
               statusEl.textContent = "스캔 완료 → 코드 조회 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "code", code });
+              lookupJSONP_({ mode: "code", code, _accKey: "C:" + code });
               return;
             }
 
-            // 자동 판별: 숫자 포함 + 길이>=6이면 코드로 간주, 아니면 키워드
             const hasDigit = /\d/.test(raw);
             if (raw.length >= 6 && hasDigit) {
               const code = raw;
               codeEl.textContent = code;
               statusEl.textContent = "스캔 완료 → 코드 조회 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "code", code });
+              lookupJSONP_({ mode: "code", code, _accKey: "C:" + code });
             } else {
               const keyword = raw;
               codeEl.textContent = keyword;
               statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "keyword", keyword });
+              lookupJSONP_({ mode: "keyword", keyword, _accKey: "K:" + keyword });
             }
           },
           () => {}
@@ -159,16 +289,20 @@
       scanning = false;
     }
 
-    // ----- 텍스트 검색 -----
+    // =========================
+    // 텍스트 검색
+    // =========================
     document.getElementById("btnKw").onclick = () => {
       const keyword = (kwEl.value || "").trim();
       if (!keyword) return;
-      codeEl.textContent = "";
+      codeEl.textContent = keyword;
       statusEl.textContent = "검색 중...";
-      lookupJSONP_({ mode: "keyword", keyword });
+      lookupJSONP_({ mode: "keyword", keyword, _accKey: "K:" + keyword });
     };
 
-    // ----- OCR 버튼 활성화(안정) -----
+    // =========================
+    // OCR
+    // =========================
     function refreshOcrButton_() {
       btnOcr.disabled = !(photoEl && photoEl.files && photoEl.files.length);
     }
@@ -176,7 +310,6 @@
     photoEl.addEventListener("input", refreshOcrButton_);
     refreshOcrButton_();
 
-    // ----- OCR (짧은 단어/코드 최적화, 멈춤 방지) -----
     function withTimeout(promise, ms, label="작업") {
       return Promise.race([
         promise,
@@ -198,9 +331,7 @@
         const file = photoEl.files[0];
         const imgUrl = await fileToDataUrl_(file);
 
-        // ✅ 현장용: 3회만 시도(빠르고 안정)
         const tries = [];
-
         statusEl.textContent = "OCR(1/3)...";
         tries.push(await ocrOnce_(imgUrl));
 
@@ -222,7 +353,8 @@
 
         renderChips_([best.token]);
         statusEl.textContent = `OCR 후보: ${best.token}`;
-        lookupJSONP_({ mode: "keyword", keyword: best.token });
+        // OCR은 키워드로 검색
+        lookupJSONP_({ mode: "keyword", keyword: best.token, _accKey: "K:" + best.token });
 
       } catch (e) {
         statusEl.textContent = "OCR 실패: " + (e.message || e);
@@ -256,7 +388,6 @@
         .trim();
     }
 
-    // ✅ 연속 토큰이 없으면 한 글자들을 이어붙임(F E Z -> FEZ)
     function pickToken_(t) {
       const s = String(t || "").trim().toUpperCase();
       if (!s) return "";
@@ -296,7 +427,7 @@
         const el = document.createElement("div");
         el.className = "chip";
         el.textContent = k;
-        el.onclick = () => lookupJSONP_({ mode: "keyword", keyword: k });
+        el.onclick = () => lookupJSONP_({ mode: "keyword", keyword: k, _accKey: "K:" + k });
         chipsEl.appendChild(el);
       });
     }
@@ -350,7 +481,9 @@
       });
     }
 
-    // ----- JSONP -----
+    // =========================
+    // JSONP + 누적 처리 핵심
+    // =========================
     function lookupJSONP_(params) {
       const cb = "__cb_" + Math.random().toString(36).slice(2);
       let script;
@@ -364,10 +497,44 @@
         try {
           if (!data.ok) {
             statusEl.textContent = "조회 실패: " + (data.reason || data.error);
-            resultEl.innerHTML = "";
+            if (!ACC_MODE) resultEl.innerHTML = "";
             return;
           }
 
+          const accKey = params._accKey || (
+            params.mode === "code" ? ("C:" + (params.code || "")) : ("K:" + (params.keyword || ""))
+          );
+
+          // ===== 누적 모드 =====
+          if (ACC_MODE) {
+            if (params.mode === "code") {
+              const row = {
+                location: String(data.location || ""),
+                name: String(data.name || ""),
+                code: String(data.code || ""),
+                note: String(data.note || "")
+              };
+              upsertAcc_(accKey, "code", params.code || "", [row]);
+              codeEl.textContent = accKey;
+              statusEl.textContent = `누적 완료(갱신): ${accKey}`;
+              renderAccumulated_();
+              return;
+            } else {
+              const rows = (data.results || []).map(x => ({
+                location: String(x.location || ""),
+                name: String(x.name || ""),
+                code: String(x.code || ""),
+                note: String(x.note || "")
+              }));
+              upsertAcc_(accKey, "keyword", params.keyword || "", rows);
+              codeEl.textContent = accKey;
+              statusEl.textContent = `누적 완료(갱신): ${accKey} (${rows.length}개)`;
+              renderAccumulated_();
+              return;
+            }
+          }
+
+          // ===== 단일 모드(기존 동작) =====
           if (params.mode === "code") {
             statusEl.textContent = "완료";
             const loc = String(data.location || "").replace(/\s+/g, "");
@@ -435,7 +602,10 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
     }
+    function escAttr_(s) {
+      // attribute용 최소 이스케이프
+      return String(s ?? "").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    }
   </script>
 </body>
 </html>
-
