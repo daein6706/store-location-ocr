@@ -2,7 +2,9 @@ const CACHE_NAME = "location-app-v1";
 const URLS_TO_CACHE = [
   "./",
   "./index.html",
-  "./manifest.json"
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
