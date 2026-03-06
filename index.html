@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>로케이션 조회 (QR/텍스트/OCR)</title>
+  <title>로케이션 조회 (QR/텍스트)</title>
 
-  <!-- PWA 추가 -->
+  <!-- PWA -->
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#ffffff" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -14,80 +14,147 @@
   <link rel="apple-touch-icon" href="icon-192.png" />
 
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
-    #reader { width: 100%; max-width: 520px; }
-    .box { margin-top: 12px; padding: 12px; border: 1px solid #eee; border-radius: 12px; background: #fafafa; }
-    button { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; background: #fff; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    input[type="text"] { padding: 10px 12px; border: 1px solid #ddd; border-radius: 10px; min-width: 180px; }
-    input[type="file"] { padding: 10px 0; }
-    .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center; }
-    .hint { color:#666; font-size:13px; }
-    .small { font-size: 12px; color: #777; }
-    .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-    .chip { padding: 8px 10px; border: 1px solid #ddd; border-radius: 999px; background: #fff; cursor: pointer; }
-    pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
-
-    #result { overflow-x: auto; }
-    table { border-collapse: collapse; width: 100%; margin-top: 10px; min-width: 720px; }
-    th, td { border: 1px solid #e5e5e5; padding: 8px; font-size: 14px; vertical-align: top; }
-    th { background: #f3f3f3; text-align: left; }
-    table th:first-child, table td:first-child { white-space: nowrap; min-width: 90px; }
-    th.note, td.note { min-width: 160px; white-space: normal; word-break: keep-all; }
-
-    .pill {
-      display:inline-flex; align-items:center; gap:6px;
-      padding:6px 10px; border:1px solid #ddd; border-radius:999px; background:#fff;
-      font-size:13px; color:#333;
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 16px;
     }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    #reader {
+      width: 100%;
+      max-width: 520px;
+    }
+    .box {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #eee;
+      border-radius: 12px;
+      background: #fafafa;
+    }
+    button {
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      background: #fff;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    input[type="text"] {
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      min-width: 180px;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+      align-items: center;
+    }
+    .hint {
+      color: #666;
+      font-size: 13px;
+    }
+    .small {
+      font-size: 12px;
+      color: #777;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    #searchResult,
+    #cartResult {
+      overflow-x: auto;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 10px;
+      min-width: 760px;
+    }
+    th, td {
+      border: 1px solid #e5e5e5;
+      padding: 8px;
+      font-size: 14px;
+      vertical-align: top;
+    }
+    th {
+      background: #f3f3f3;
+      text-align: left;
+    }
+
+    th.action, td.action {
+      width: 90px;
+      min-width: 90px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    th.location, td.location {
+      min-width: 100px;
+      white-space: nowrap;
+    }
+    th.name, td.name {
+      min-width: 180px;
+    }
+    th.note, td.note {
+      min-width: 160px;
+      white-space: normal;
+      word-break: keep-all;
+    }
+    th.code, td.code {
+      min-width: 140px;
+      white-space: nowrap;
+    }
+
+    .section-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
   </style>
 </head>
 <body>
   <h3>로케이션 조회</h3>
-  <div class="hint">QR(상품코드/스타일키) / 상품명 키워드 / 코드 라벨 사진(OCR)</div>
+  <div class="hint">QR(상품코드/스타일키) / 상품명 키워드 검색</div>
 
-  <div class="row">
-    <span class="pill">모드: <b id="accLabel">누적 ON</b></span>
-    <button id="btnToggleAcc">누적 ON/OFF</button>
-    <button id="btnClearAcc">전체 초기화</button>
-  </div>
-  <div class="small">
-    누적 ON: 검색/스캔 결과가 계속 추가됩니다(같은 키 재검색 시 갱신). / OFF: 기존처럼 단일 결과만 표시.
-  </div>
-
+  <!-- QR -->
   <div id="reader"></div>
   <div class="row">
     <button id="btnStart">QR 스캔 시작</button>
     <button id="btnStop">QR 스캔 중지</button>
   </div>
 
+  <!-- 텍스트 검색 -->
   <div class="row">
     <input id="kw" type="text" placeholder="키워드(예: FEZ / AERO)" />
     <button id="btnKw">상품명 검색</button>
   </div>
 
-  <div class="box">
-    <div><b>코드 라벨 사진(OCR)</b></div>
-    <div class="small">팁: 글자만 크게(3배 줌) + 선명하게 + 화면 중앙</div>
-    <div class="row">
-      <input id="photo" type="file" accept="image/*" capture="environment" />
-      <button id="btnOcr" disabled>사진 OCR 실행</button>
-    </div>
-    <div><b>OCR 텍스트:</b></div>
-    <pre id="ocrText"></pre>
-    <div><b>키워드 후보(탭해서 검색):</b></div>
-    <div class="chips" id="chips"></div>
-  </div>
-
+  <!-- 상태 -->
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
-    <div><b>코드:</b> <span id="code" class="mono"></span></div>
-    <div id="result"></div>
+    <div><b>검색값:</b> <span id="code" class="mono"></span></div>
+  </div>
+
+  <!-- 검색 결과 -->
+  <div class="box">
+    <div class="section-title">검색 결과</div>
+    <div id="searchResult"><div class="hint">검색 결과 없음</div></div>
+  </div>
+
+  <!-- 담은 목록 -->
+  <div class="box">
+    <div class="row" style="justify-content: space-between;">
+      <div class="section-title">담은 목록</div>
+      <button id="btnClearCart">전체 비우기</button>
+    </div>
+    <div id="cartResult"><div class="hint">담은 항목 없음</div></div>
   </div>
 
   <script src="https://unpkg.com/html5-qrcode"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <script>
     const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbwb7N0iNMT4Pg3i2INRrcJTEeAfovMATjtH0kKvPr5kJ_VwxVSntfNjW-KG_hIB2SCq/exec";
@@ -95,116 +162,163 @@
 
     const statusEl = document.getElementById("status");
     const codeEl = document.getElementById("code");
-    const resultEl = document.getElementById("result");
     const kwEl = document.getElementById("kw");
+    const searchResultEl = document.getElementById("searchResult");
+    const cartResultEl = document.getElementById("cartResult");
+    const btnClearCart = document.getElementById("btnClearCart");
 
-    const photoEl = document.getElementById("photo");
-    const btnOcr = document.getElementById("btnOcr");
-    const ocrTextEl = document.getElementById("ocrText");
-    const chipsEl = document.getElementById("chips");
+    // 장바구니
+    // key: code가 있으면 code, 없으면 location|name
+    const cartMap = new Map();
+    const cartOrder = [];
 
-    let ACC_MODE = true;
-    const accLabelEl = document.getElementById("accLabel");
-    const btnToggleAcc = document.getElementById("btnToggleAcc");
-    const btnClearAcc = document.getElementById("btnClearAcc");
-
-    const accMap = new Map();
-    const accOrder = [];
-
-    function setAccLabel_() {
-      accLabelEl.textContent = ACC_MODE ? "누적 ON" : "누적 OFF";
-    }
-    setAccLabel_();
-
-    btnToggleAcc.onclick = () => {
-      ACC_MODE = !ACC_MODE;
-      setAccLabel_();
-      statusEl.textContent = ACC_MODE ? "누적 모드 ON" : "누적 모드 OFF";
-      if (ACC_MODE) renderAccumulated_();
-    };
-
-    btnClearAcc.onclick = () => {
-      accMap.clear();
-      accOrder.length = 0;
-      resultEl.innerHTML = "<div class='hint'>누적 결과 없음</div>";
-      statusEl.textContent = "초기화 완료";
-      codeEl.textContent = "";
-    };
-
-    function upsertAcc_(key, mode, query, rows) {
-      if (!accMap.has(key)) accOrder.push(key);
-      accMap.set(key, { key, mode, query, rows });
+    function makeCartKey_(row) {
+      const code = String(row.code || "").trim();
+      if (code) return "C:" + code;
+      return "N:" + String(row.location || "") + "|" + String(row.name || "");
     }
 
-    function removeAcc_(key) {
-      accMap.delete(key);
-      const idx = accOrder.indexOf(key);
-      if (idx >= 0) accOrder.splice(idx, 1);
+    function addToCart_(row) {
+      const key = makeCartKey_(row);
+      if (!cartMap.has(key)) {
+        cartOrder.push(key);
+      }
+      cartMap.set(key, {
+        location: String(row.location || ""),
+        name: String(row.name || ""),
+        note: String(row.note || ""),
+        code: String(row.code || "")
+      });
+      renderCart_();
+      statusEl.textContent = "담기 완료";
     }
 
-    function renderAccumulated_() {
-      if (!accOrder.length) {
-        resultEl.innerHTML = "<div class='hint'>누적 결과 없음</div>";
+    function removeFromCart_(key) {
+      cartMap.delete(key);
+      const idx = cartOrder.indexOf(key);
+      if (idx >= 0) cartOrder.splice(idx, 1);
+      renderCart_();
+      statusEl.textContent = "삭제 완료";
+    }
+
+    function renderCart_() {
+      if (!cartOrder.length) {
+        cartResultEl.innerHTML = "<div class='hint'>담은 항목 없음</div>";
         return;
       }
 
-      const flat = [];
-      for (const key of accOrder) {
-        const entry = accMap.get(key);
-        if (!entry) continue;
-        for (const r of entry.rows) {
-          flat.push({ key, ...r });
-        }
-      }
-
       let html = `
-        <div class="small">누적 항목: <b>${accOrder.length}개</b> (키를 다시 스캔/검색하면 해당 항목이 갱신됩니다)</div>
+        <div class="small">담은 항목: <b>${cartOrder.length}개</b></div>
         <table>
           <thead>
             <tr>
-              <th>검색키</th>
-              <th>로케이션</th>
-              <th>상품명</th>
-              <th>상품코드</th>
+              <th class="action">삭제</th>
+              <th class="location">로케이션</th>
+              <th class="name">상품명</th>
               <th class="note">비고</th>
+              <th class="code">상품코드</th>
             </tr>
           </thead>
           <tbody>
       `;
 
-      for (const r of flat) {
-        const loc = String(r.location || "").replace(/\s+/g, "");
+      for (const key of cartOrder) {
+        const row = cartMap.get(key);
+        if (!row) continue;
+
+        const loc = String(row.location || "").replace(/\s+/g, "");
+        const note = String(row.note || "").trim();
+
         html += `
           <tr>
-            <td class="mono">${esc_(r.key)}</td>
-            <td>${esc_(loc)}</td>
-            <td>${esc_(r.name || "")}</td>
-            <td class="mono">${esc_(r.code || "")}</td>
-            <td class="note">${esc_(r.note || "")}</td>
+            <td class="action">
+              <button data-removekey="${escAttr_(key)}">삭제</button>
+            </td>
+            <td class="location">${esc_(loc)}</td>
+            <td class="name">${esc_(row.name || "")}</td>
+            <td class="note">${esc_(note)}</td>
+            <td class="code mono">${esc_(row.code || "")}</td>
           </tr>
         `;
       }
 
-      html += "</tbody></table>";
+      html += `
+          </tbody>
+        </table>
+      `;
 
-      html += `<div class="row" style="margin-top:8px;">`;
-      for (const key of accOrder) {
-        html += `<button data-delkey="${escAttr_(key)}">삭제: ${esc_(key)}</button>`;
-      }
-      html += `</div>`;
+      cartResultEl.innerHTML = html;
 
-      resultEl.innerHTML = html;
-
-      resultEl.querySelectorAll("button[data-delkey]").forEach(btn => {
+      cartResultEl.querySelectorAll("button[data-removekey]").forEach(btn => {
         btn.onclick = () => {
-          const k = btn.getAttribute("data-delkey");
-          removeAcc_(k);
-          renderAccumulated_();
-          statusEl.textContent = "삭제됨: " + k;
+          const key = btn.getAttribute("data-removekey");
+          removeFromCart_(key);
         };
       });
     }
 
+    btnClearCart.onclick = () => {
+      cartMap.clear();
+      cartOrder.length = 0;
+      renderCart_();
+      statusEl.textContent = "담은 목록 초기화 완료";
+    };
+
+    function renderSearchRows_(rows) {
+      if (!rows || !rows.length) {
+        searchResultEl.innerHTML = "<div class='hint'>일치 결과 없음</div>";
+        return;
+      }
+
+      let html = `
+        <table>
+          <thead>
+            <tr>
+              <th class="action">담기</th>
+              <th class="location">로케이션</th>
+              <th class="name">상품명</th>
+              <th class="note">비고</th>
+              <th class="code">상품코드</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      rows.forEach((row, idx) => {
+        const loc = String(row.location || "").replace(/\s+/g, "");
+        const note = String(row.note || "").trim();
+
+        html += `
+          <tr>
+            <td class="action">
+              <button data-addidx="${idx}">담기</button>
+            </td>
+            <td class="location">${esc_(loc)}</td>
+            <td class="name">${esc_(row.name || "")}</td>
+            <td class="note">${esc_(note)}</td>
+            <td class="code mono">${esc_(row.code || "")}</td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+      `;
+
+      searchResultEl.innerHTML = html;
+
+      searchResultEl.querySelectorAll("button[data-addidx]").forEach(btn => {
+        btn.onclick = () => {
+          const idx = Number(btn.getAttribute("data-addidx"));
+          const row = rows[idx];
+          if (!row) return;
+          addToCart_(row);
+        };
+      });
+    }
+
+    // QR
     const html5QrCode = new Html5Qrcode("reader");
     let scanning = false;
 
@@ -212,7 +326,6 @@
       if (scanning) return;
       scanning = true;
       statusEl.textContent = "카메라 시작...";
-      if (!ACC_MODE) resultEl.innerHTML = "";
 
       try {
         await html5QrCode.start(
@@ -226,7 +339,7 @@
               codeEl.textContent = keyword;
               statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "keyword", keyword, _accKey: "K:" + keyword });
+              lookupJSONP_({ mode: "keyword", keyword });
               return;
             }
 
@@ -235,7 +348,7 @@
               codeEl.textContent = code;
               statusEl.textContent = "스캔 완료 → 코드 조회 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "code", code, _accKey: "C:" + code });
+              lookupJSONP_({ mode: "code", code });
               return;
             }
 
@@ -245,13 +358,13 @@
               codeEl.textContent = code;
               statusEl.textContent = "스캔 완료 → 코드 조회 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "code", code, _accKey: "C:" + code });
+              lookupJSONP_({ mode: "code", code });
             } else {
               const keyword = raw;
               codeEl.textContent = keyword;
               statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
               await stopScan_();
-              lookupJSONP_({ mode: "keyword", keyword, _accKey: "K:" + keyword });
+              lookupJSONP_({ mode: "keyword", keyword });
             }
           },
           () => {}
@@ -270,288 +383,64 @@
 
     async function stopScan_() {
       if (!scanning) return;
-      try { await html5QrCode.stop(); } catch(e) {}
-      try { html5QrCode.clear(); } catch(e) {}
+      try { await html5QrCode.stop(); } catch (e) {}
+      try { html5QrCode.clear(); } catch (e) {}
       scanning = false;
     }
 
+    // 텍스트 검색
     document.getElementById("btnKw").onclick = () => {
       const keyword = (kwEl.value || "").trim();
       if (!keyword) return;
       codeEl.textContent = keyword;
       statusEl.textContent = "검색 중...";
-      lookupJSONP_({ mode: "keyword", keyword, _accKey: "K:" + keyword });
+      lookupJSONP_({ mode: "keyword", keyword });
     };
 
-    function refreshOcrButton_() {
-      btnOcr.disabled = !(photoEl && photoEl.files && photoEl.files.length);
-    }
-    photoEl.addEventListener("change", refreshOcrButton_);
-    photoEl.addEventListener("input", refreshOcrButton_);
-    refreshOcrButton_();
-
-    function withTimeout(promise, ms, label="작업") {
-      return Promise.race([
-        promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error(label + " 타임아웃")), ms))
-      ]);
-    }
-
-    btnOcr.onclick = async () => {
-      if (!photoEl.files || !photoEl.files.length) return;
-
-      await stopScan_();
-      btnOcr.disabled = true;
-
-      try {
-        statusEl.textContent = "OCR 준비 중...";
-        ocrTextEl.textContent = "";
-        chipsEl.innerHTML = "";
-
-        const file = photoEl.files[0];
-        const imgUrl = await fileToDataUrl_(file);
-
-        const tries = [];
-        statusEl.textContent = "OCR(1/3)...";
-        tries.push(await ocrOnce_(imgUrl));
-
-        statusEl.textContent = "OCR(2/3)...";
-        const crop = await cropCenter_(imgUrl, 0.85, 0.85);
-        tries.push(await ocrOnce_(crop));
-
-        statusEl.textContent = "OCR(3/3)...";
-        const bin = await binarize_(crop, 170);
-        tries.push(await ocrOnce_(bin));
-
-        const best = pickBest_(tries);
-        ocrTextEl.textContent = best.cleaned || "(인식 결과 없음)";
-
-        if (!best.token) {
-          statusEl.textContent = "키워드 추출 실패(더 선명하게/더 크게 찍어줘)";
-          return;
-        }
-
-        renderChips_([best.token]);
-        statusEl.textContent = `OCR 후보: ${best.token}`;
-        lookupJSONP_({ mode: "keyword", keyword: best.token, _accKey: "K:" + best.token });
-
-      } catch (e) {
-        statusEl.textContent = "OCR 실패: " + (e.message || e);
-      } finally {
-        refreshOcrButton_();
+    kwEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        document.getElementById("btnKw").click();
       }
-    };
+    });
 
-    async function ocrOnce_(dataUrl) {
-      const res = await withTimeout(
-        Tesseract.recognize(dataUrl, "eng", {
-          tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ",
-          tessedit_pageseg_mode: "8"
-        }),
-        15000,
-        "OCR"
-      );
-
-      const raw = (res && res.data && res.data.text) ? res.data.text : "";
-      const cleaned = cleanOcr_(raw);
-      const token = pickToken_(cleaned);
-      const score = score_(token, cleaned);
-      return { raw, cleaned, token, score };
-    }
-
-    function cleanOcr_(t) {
-      return String(t || "")
-        .toUpperCase()
-        .replace(/[^A-Z0-9\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-    }
-
-    function pickToken_(t) {
-      const s = String(t || "").trim().toUpperCase();
-      if (!s) return "";
-
-      const toks = s.match(/[A-Z0-9]{2,}/g) || [];
-      if (toks.length) {
-        toks.sort((a,b) => b.length - a.length);
-        return toks[0];
-      }
-
-      const singles = s.match(/[A-Z0-9]/g) || [];
-      if (singles.length >= 2) {
-        return singles.slice(0, 8).join("");
-      }
-      return "";
-    }
-
-    function score_(token, cleaned) {
-      if (!token) return -1;
-      const len = token.length;
-      let score = 0;
-      if (len >= 2 && len <= 8) score += 50;
-      score += Math.min(30, len * 5);
-      score -= Math.max(0, (cleaned || "").length - 20);
-      return score;
-    }
-
-    function pickBest_(arr) {
-      let best = { score: -1, cleaned:"", token:"" };
-      for (const x of arr) if (x.score > best.score) best = x;
-      return best;
-    }
-
-    function renderChips_(arr) {
-      chipsEl.innerHTML = "";
-      arr.forEach(k => {
-        const el = document.createElement("div");
-        el.className = "chip";
-        el.textContent = k;
-        el.onclick = () => lookupJSONP_({ mode: "keyword", keyword: k, _accKey: "K:" + k });
-        chipsEl.appendChild(el);
-      });
-    }
-
-    function fileToDataUrl_(file) {
-      return new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result);
-        r.onerror = reject;
-        r.readAsDataURL(file);
-      });
-    }
-
-    async function cropCenter_(dataUrl, wRatio, hRatio) {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          const w = img.width, h = img.height;
-          const cw = Math.floor(w * wRatio);
-          const ch = Math.floor(h * hRatio);
-          const sx = Math.floor((w - cw) / 2);
-          const sy = Math.floor((h - ch) / 2);
-          const c = document.createElement("canvas");
-          c.width = cw; c.height = ch;
-          c.getContext("2d").drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
-          resolve(c.toDataURL("image/png"));
-        };
-        img.src = dataUrl;
-      });
-    }
-
-    async function binarize_(dataUrl, threshold = 170) {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          const c = document.createElement("canvas");
-          c.width = img.width; c.height = img.height;
-          const ctx = c.getContext("2d");
-          ctx.drawImage(img, 0, 0);
-          const im = ctx.getImageData(0, 0, c.width, c.height);
-          const d = im.data;
-          for (let i = 0; i < d.length; i += 4) {
-            const y = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-            const v = y > threshold ? 255 : 0;
-            d[i] = d[i+1] = d[i+2] = v;
-          }
-          ctx.putImageData(im, 0, 0);
-          resolve(c.toDataURL("image/png"));
-        };
-        img.src = dataUrl;
-      });
-    }
-
+    // JSONP
     function lookupJSONP_(params) {
       const cb = "__cb_" + Math.random().toString(36).slice(2);
       let script;
 
       const cleanup = () => {
-        try { delete window[cb]; } catch(e) {}
+        try { delete window[cb]; } catch (e) {}
         if (script && script.parentNode) script.parentNode.removeChild(script);
       };
 
       window[cb] = (data) => {
         try {
           if (!data.ok) {
-            statusEl.textContent = "조회 실패: " + (data.reason || data.error);
-            if (!ACC_MODE) resultEl.innerHTML = "";
+            statusEl.textContent = "조회 실패: " + (data.reason || data.error || "");
+            searchResultEl.innerHTML = "<div class='hint'>조회 실패</div>";
             return;
-          }
-
-          const accKey = params._accKey || (
-            params.mode === "code" ? ("C:" + (params.code || "")) : ("K:" + (params.keyword || ""))
-          );
-
-          if (ACC_MODE) {
-            if (params.mode === "code") {
-              const row = {
-                location: String(data.location || ""),
-                name: String(data.name || ""),
-                code: String(data.code || ""),
-                note: String(data.note || "")
-              };
-              upsertAcc_(accKey, "code", params.code || "", [row]);
-              codeEl.textContent = accKey;
-              statusEl.textContent = `누적 완료(갱신): ${accKey}`;
-              renderAccumulated_();
-              return;
-            } else {
-              const rows = (data.results || []).map(x => ({
-                location: String(x.location || ""),
-                name: String(x.name || ""),
-                code: String(x.code || ""),
-                note: String(x.note || "")
-              }));
-              upsertAcc_(accKey, "keyword", params.keyword || "", rows);
-              codeEl.textContent = accKey;
-              statusEl.textContent = `누적 완료(갱신): ${accKey} (${rows.length}개)`;
-              renderAccumulated_();
-              return;
-            }
           }
 
           if (params.mode === "code") {
-            statusEl.textContent = "완료";
-            const loc = String(data.location || "").replace(/\s+/g, "");
-            const note = String(data.note || "").trim();
-
-            resultEl.innerHTML = `
-              <table>
-                <thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th><th class="note">비고</th></tr></thead>
-                <tbody>
-                  <tr>
-                    <td>${esc_(loc)}</td>
-                    <td>${esc_(data.name)}</td>
-                    <td>${esc_(data.code)}</td>
-                    <td class="note">${esc_(note)}</td>
-                  </tr>
-                </tbody>
-              </table>`;
+            statusEl.textContent = "완료: 1개";
+            renderSearchRows_([{
+              location: String(data.location || ""),
+              name: String(data.name || ""),
+              note: String(data.note || ""),
+              code: String(data.code || "")
+            }]);
             return;
           }
 
-          statusEl.textContent = `완료: ${data.count}개`;
-          const rows = data.results || [];
-          if (!rows.length) {
-            resultEl.innerHTML = "<div class='hint'>일치 결과 없음</div>";
-            return;
-          }
+          const rows = (data.results || []).map(x => ({
+            location: String(x.location || ""),
+            name: String(x.name || ""),
+            note: String(x.note || ""),
+            code: String(x.code || "")
+          }));
 
-          let html = `<table>
-            <thead><tr><th>로케이션</th><th>상품명</th><th>상품코드</th><th class="note">비고</th></tr></thead>
-            <tbody>`;
-
-          for (const x of rows) {
-            const loc = String(x.location || "").replace(/\s+/g,"");
-            const note = String(x.note || "").trim();
-            html += `<tr>
-              <td>${esc_(loc)}</td>
-              <td>${esc_(x.name)}</td>
-              <td>${esc_(x.code)}</td>
-              <td class="note">${esc_(note)}</td>
-            </tr>`;
-          }
-          html += "</tbody></table>";
-          resultEl.innerHTML = html;
+          statusEl.textContent = `완료: ${rows.length}개`;
+          renderSearchRows_(rows);
 
         } finally {
           cleanup();
@@ -578,9 +467,14 @@
     }
 
     function escAttr_(s) {
-      return String(s ?? "").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
     }
 
+    // PWA service worker
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         try {
