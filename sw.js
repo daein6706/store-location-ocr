@@ -1,4 +1,4 @@
-const CACHE_NAME = "location-app-v6";
+const CACHE_NAME = "location-app-v7";
 const URLS_TO_CACHE = [
   "./",
   "./index.html",
@@ -53,6 +53,7 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
 
 
 
