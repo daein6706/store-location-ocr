@@ -1,490 +1,55 @@
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>로케이션 조회 (QR/텍스트)</title>
+const CACHE_NAME = "location-app-v1";
+const URLS_TO_CACHE = [
+  "./",
+  "./index.html",
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png"
+];
 
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#ffffff" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="로케이션 조회" />
-  <link rel="apple-touch-icon" href="icon-192.png" />
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(URLS_TO_CACHE))
+  );
+  self.skipWaiting();
+});
 
-  <style>
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      margin: 16px;
-    }
-    #reader {
-      width: 100%;
-      max-width: 520px;
-    }
-    .box {
-      margin-top: 12px;
-      padding: 12px;
-      border: 1px solid #eee;
-      border-radius: 12px;
-      background: #fafafa;
-    }
-    button {
-      padding: 10px 12px;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      background: #fff;
-      cursor: pointer;
-    }
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    input[type="text"] {
-      padding: 10px 12px;
-      border: 1px solid #ddd;
-      border-radius: 10px;
-      min-width: 180px;
-    }
-    .row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-      align-items: center;
-    }
-    .hint {
-      color: #666;
-      font-size: 13px;
-    }
-    .small {
-      font-size: 12px;
-      color: #777;
-    }
-    .mono {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    }
-
-    #searchResult,
-    #cartResult {
-      overflow-x: auto;
-    }
-
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      margin-top: 10px;
-      min-width: 760px;
-    }
-    th, td {
-      border: 1px solid #e5e5e5;
-      padding: 8px;
-      font-size: 14px;
-      vertical-align: top;
-    }
-    th {
-      background: #f3f3f3;
-      text-align: left;
-    }
-
-    th.action, td.action {
-      width: 90px;
-      min-width: 90px;
-      text-align: center;
-      white-space: nowrap;
-    }
-    th.location, td.location {
-      min-width: 100px;
-      white-space: nowrap;
-    }
-    th.name, td.name {
-      min-width: 180px;
-    }
-    th.note, td.note {
-      min-width: 160px;
-      white-space: normal;
-      word-break: keep-all;
-    }
-    th.code, td.code {
-      min-width: 140px;
-      white-space: nowrap;
-    }
-
-    .section-title {
-      font-weight: 700;
-      margin-bottom: 4px;
-    }
-  </style>
-</head>
-<body>
-  <h3>로케이션 조회</h3>
-  <div class="hint">QR(상품코드/스타일키) / 상품명 키워드 검색</div>
-
-  <!-- QR -->
-  <div id="reader"></div>
-  <div class="row">
-    <button id="btnStart">QR 스캔 시작</button>
-    <button id="btnStop">QR 스캔 중지</button>
-  </div>
-
-  <!-- 텍스트 검색 -->
-  <div class="row">
-    <input id="kw" type="text" placeholder="키워드(예: FEZ / AERO)" />
-    <button id="btnKw">상품명 검색</button>
-  </div>
-
-  <!-- 상태 -->
-  <div class="box">
-    <div><b>상태:</b> <span id="status">대기</span></div>
-    <div><b>검색값:</b> <span id="code" class="mono"></span></div>
-  </div>
-
-  <!-- 검색 결과 -->
-  <div class="box">
-    <div class="section-title">검색 결과</div>
-    <div id="searchResult"><div class="hint">검색 결과 없음</div></div>
-  </div>
-
-  <!-- 담은 목록 -->
-  <div class="box">
-    <div class="row" style="justify-content: space-between;">
-      <div class="section-title">담은 목록</div>
-      <button id="btnClearCart">전체 비우기</button>
-    </div>
-    <div id="cartResult"><div class="hint">담은 항목 없음</div></div>
-  </div>
-
-  <script src="https://unpkg.com/html5-qrcode"></script>
-
-  <script>
-    const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbwb7N0iNMT4Pg3i2INRrcJTEeAfovMATjtH0kKvPr5kJ_VwxVSntfNjW-KG_hIB2SCq/exec";
-    const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
-
-    const statusEl = document.getElementById("status");
-    const codeEl = document.getElementById("code");
-    const kwEl = document.getElementById("kw");
-    const searchResultEl = document.getElementById("searchResult");
-    const cartResultEl = document.getElementById("cartResult");
-    const btnClearCart = document.getElementById("btnClearCart");
-
-    // 장바구니
-    // key: code가 있으면 code, 없으면 location|name
-    const cartMap = new Map();
-    const cartOrder = [];
-
-    function makeCartKey_(row) {
-      const code = String(row.code || "").trim();
-      if (code) return "C:" + code;
-      return "N:" + String(row.location || "") + "|" + String(row.name || "");
-    }
-
-    function addToCart_(row) {
-      const key = makeCartKey_(row);
-      if (!cartMap.has(key)) {
-        cartOrder.push(key);
-      }
-      cartMap.set(key, {
-        location: String(row.location || ""),
-        name: String(row.name || ""),
-        note: String(row.note || ""),
-        code: String(row.code || "")
-      });
-      renderCart_();
-      statusEl.textContent = "담기 완료";
-    }
-
-    function removeFromCart_(key) {
-      cartMap.delete(key);
-      const idx = cartOrder.indexOf(key);
-      if (idx >= 0) cartOrder.splice(idx, 1);
-      renderCart_();
-      statusEl.textContent = "삭제 완료";
-    }
-
-    function renderCart_() {
-      if (!cartOrder.length) {
-        cartResultEl.innerHTML = "<div class='hint'>담은 항목 없음</div>";
-        return;
-      }
-
-      let html = `
-        <div class="small">담은 항목: <b>${cartOrder.length}개</b></div>
-        <table>
-          <thead>
-            <tr>
-              <th class="action">삭제</th>
-              <th class="location">로케이션</th>
-              <th class="name">상품명</th>
-              <th class="note">비고</th>
-              <th class="code">상품코드</th>
-            </tr>
-          </thead>
-          <tbody>
-      `;
-
-      for (const key of cartOrder) {
-        const row = cartMap.get(key);
-        if (!row) continue;
-
-        const loc = String(row.location || "").replace(/\s+/g, "");
-        const note = String(row.note || "").trim();
-
-        html += `
-          <tr>
-            <td class="action">
-              <button data-removekey="${escAttr_(key)}">삭제</button>
-            </td>
-            <td class="location">${esc_(loc)}</td>
-            <td class="name">${esc_(row.name || "")}</td>
-            <td class="note">${esc_(note)}</td>
-            <td class="code mono">${esc_(row.code || "")}</td>
-          </tr>
-        `;
-      }
-
-      html += `
-          </tbody>
-        </table>
-      `;
-
-      cartResultEl.innerHTML = html;
-
-      cartResultEl.querySelectorAll("button[data-removekey]").forEach(btn => {
-        btn.onclick = () => {
-          const key = btn.getAttribute("data-removekey");
-          removeFromCart_(key);
-        };
-      });
-    }
-
-    btnClearCart.onclick = () => {
-      cartMap.clear();
-      cartOrder.length = 0;
-      renderCart_();
-      statusEl.textContent = "담은 목록 초기화 완료";
-    };
-
-    function renderSearchRows_(rows) {
-      if (!rows || !rows.length) {
-        searchResultEl.innerHTML = "<div class='hint'>일치 결과 없음</div>";
-        return;
-      }
-
-      let html = `
-        <table>
-          <thead>
-            <tr>
-              <th class="action">담기</th>
-              <th class="location">로케이션</th>
-              <th class="name">상품명</th>
-              <th class="note">비고</th>
-              <th class="code">상품코드</th>
-            </tr>
-          </thead>
-          <tbody>
-      `;
-
-      rows.forEach((row, idx) => {
-        const loc = String(row.location || "").replace(/\s+/g, "");
-        const note = String(row.note || "").trim();
-
-        html += `
-          <tr>
-            <td class="action">
-              <button data-addidx="${idx}">담기</button>
-            </td>
-            <td class="location">${esc_(loc)}</td>
-            <td class="name">${esc_(row.name || "")}</td>
-            <td class="note">${esc_(note)}</td>
-            <td class="code mono">${esc_(row.code || "")}</td>
-          </tr>
-        `;
-      });
-
-      html += `
-          </tbody>
-        </table>
-      `;
-
-      searchResultEl.innerHTML = html;
-
-      searchResultEl.querySelectorAll("button[data-addidx]").forEach(btn => {
-        btn.onclick = () => {
-          const idx = Number(btn.getAttribute("data-addidx"));
-          const row = rows[idx];
-          if (!row) return;
-          addToCart_(row);
-        };
-      });
-    }
-
-    // QR
-    const html5QrCode = new Html5Qrcode("reader");
-    let scanning = false;
-
-    document.getElementById("btnStart").onclick = async () => {
-      if (scanning) return;
-      scanning = true;
-      statusEl.textContent = "카메라 시작...";
-
-      try {
-        await html5QrCode.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 320, height: 320 } },
-          async (decodedText) => {
-            const raw = decodedText.trim();
-
-            if (raw.startsWith("K:")) {
-              const keyword = raw.slice(2).trim();
-              codeEl.textContent = keyword;
-              statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
-              await stopScan_();
-              lookupJSONP_({ mode: "keyword", keyword });
-              return;
-            }
-
-            if (raw.startsWith("C:")) {
-              const code = raw.slice(2).trim();
-              codeEl.textContent = code;
-              statusEl.textContent = "스캔 완료 → 코드 조회 중...";
-              await stopScan_();
-              lookupJSONP_({ mode: "code", code });
-              return;
-            }
-
-            const hasDigit = /\d/.test(raw);
-            if (raw.length >= 6 && hasDigit) {
-              const code = raw;
-              codeEl.textContent = code;
-              statusEl.textContent = "스캔 완료 → 코드 조회 중...";
-              await stopScan_();
-              lookupJSONP_({ mode: "code", code });
-            } else {
-              const keyword = raw;
-              codeEl.textContent = keyword;
-              statusEl.textContent = "스캔 완료 → 키워드 검색 중...";
-              await stopScan_();
-              lookupJSONP_({ mode: "keyword", keyword });
-            }
-          },
-          () => {}
-        );
-        statusEl.textContent = "스캔 중...";
-      } catch (e) {
-        scanning = false;
-        statusEl.textContent = "스캔 시작 실패: " + e;
-      }
-    };
-
-    document.getElementById("btnStop").onclick = async () => {
-      await stopScan_();
-      statusEl.textContent = "중지";
-    };
-
-    async function stopScan_() {
-      if (!scanning) return;
-      try { await html5QrCode.stop(); } catch (e) {}
-      try { html5QrCode.clear(); } catch (e) {}
-      scanning = false;
-    }
-
-    // 텍스트 검색
-    document.getElementById("btnKw").onclick = () => {
-      const keyword = (kwEl.value || "").trim();
-      if (!keyword) return;
-      codeEl.textContent = keyword;
-      statusEl.textContent = "검색 중...";
-      lookupJSONP_({ mode: "keyword", keyword });
-    };
-
-    kwEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        document.getElementById("btnKw").click();
-      }
-    });
-
-    // JSONP
-    function lookupJSONP_(params) {
-      const cb = "__cb_" + Math.random().toString(36).slice(2);
-      let script;
-
-      const cleanup = () => {
-        try { delete window[cb]; } catch (e) {}
-        if (script && script.parentNode) script.parentNode.removeChild(script);
-      };
-
-      window[cb] = (data) => {
-        try {
-          if (!data.ok) {
-            statusEl.textContent = "조회 실패: " + (data.reason || data.error || "");
-            searchResultEl.innerHTML = "<div class='hint'>조회 실패</div>";
-            return;
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_NAME) {
+            return caches.delete(key);
           }
+        })
+      )
+    )
+  );
+  self.clients.claim();
+});
 
-          if (params.mode === "code") {
-            statusEl.textContent = "완료: 1개";
-            renderSearchRows_([{
-              location: String(data.location || ""),
-              name: String(data.name || ""),
-              note: String(data.note || ""),
-              code: String(data.code || "")
-            }]);
-            return;
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+
+      return fetch(req)
+        .then((networkRes) => {
+          if (
+            req.method === "GET" &&
+            networkRes &&
+            networkRes.status === 200 &&
+            req.url.startsWith(self.location.origin)
+          ) {
+            const cloned = networkRes.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, cloned));
           }
-
-          const rows = (data.results || []).map(x => ({
-            location: String(x.location || ""),
-            name: String(x.name || ""),
-            note: String(x.note || ""),
-            code: String(x.code || "")
-          }));
-
-          statusEl.textContent = `완료: ${rows.length}개`;
-          renderSearchRows_(rows);
-
-        } finally {
-          cleanup();
-        }
-      };
-
-      const qs = new URLSearchParams({ ...params, callback: cb }).toString();
-      script = document.createElement("script");
-      script.src = `${API_BASE}?${qs}`;
-      script.onerror = () => {
-        statusEl.textContent = "네트워크/권한 문제 (Apps Script 호출 실패)";
-        cleanup();
-      };
-      document.body.appendChild(script);
-    }
-
-    function esc_(s) {
-      return String(s ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-    }
-
-    function escAttr_(s) {
-      return String(s ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
-    }
-
-    // PWA service worker
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", async () => {
-        try {
-          await navigator.serviceWorker.register("./sw.js");
-          console.log("Service Worker registered");
-        } catch (err) {
-          console.error("Service Worker registration failed:", err);
-        }
-      });
-    }
-  </script>
-</body>
-</html>
+          return networkRes;
+        })
+        .catch(() => caches.match("./index.html"));
+    })
+  );
+});
