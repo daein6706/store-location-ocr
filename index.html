@@ -2,8 +2,17 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>로케이션 조회 (QR/텍스트/OCR)</title>
+
+  <!-- PWA 추가 -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="로케이션 조회" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
     #reader { width: 100%; max-width: 520px; }
@@ -121,8 +130,6 @@
     btnToggleAcc.onclick = () => {
       ACC_MODE = !ACC_MODE;
       setAccLabel_();
-      // 누적 OFF로 바꾸면 화면은 "최근 단일 결과"로만 보이게 하는 게 자연스러운데,
-      // 지금은 기존 결과 유지. (원하면 OFF 전환 시 result 초기화하도록 바꿀 수 있음)
       statusEl.textContent = ACC_MODE ? "누적 모드 ON" : "누적 모드 OFF";
       if (ACC_MODE) renderAccumulated_();
     };
@@ -152,7 +159,6 @@
         return;
       }
 
-      // 누적 rows 펼치기
       const flat = [];
       for (const key of accOrder) {
         const entry = accMap.get(key);
@@ -162,7 +168,6 @@
         }
       }
 
-      // 테이블 렌더 (검색키 컬럼 추가)
       let html = `
         <div class="small">누적 항목: <b>${accOrder.length}개</b> (키를 다시 스캔/검색하면 해당 항목이 갱신됩니다)</div>
         <table>
@@ -193,7 +198,6 @@
 
       html += "</tbody></table>";
 
-      // 키 삭제 버튼(간단 UI)
       html += `<div class="row" style="margin-top:8px;">`;
       for (const key of accOrder) {
         html += `<button data-delkey="${escAttr_(key)}">삭제: ${esc_(key)}</button>`;
@@ -202,7 +206,6 @@
 
       resultEl.innerHTML = html;
 
-      // 삭제 버튼 이벤트 바인딩
       resultEl.querySelectorAll("button[data-delkey]").forEach(btn => {
         btn.onclick = () => {
           const k = btn.getAttribute("data-delkey");
@@ -223,7 +226,7 @@
       if (scanning) return;
       scanning = true;
       statusEl.textContent = "카메라 시작...";
-      if (!ACC_MODE) resultEl.innerHTML = ""; // 누적 OFF면 초기화 느낌
+      if (!ACC_MODE) resultEl.innerHTML = "";
 
       try {
         await html5QrCode.start(
@@ -232,9 +235,6 @@
           async (decodedText) => {
             const raw = decodedText.trim();
 
-            // - K:FEZ   => 키워드 검색(컬러 여러개 한번에)
-            // - C:DL2.. => 코드 단건 조회
-            // - 접두어 없으면 자동 판별
             if (raw.startsWith("K:")) {
               const keyword = raw.slice(2).trim();
               codeEl.textContent = keyword;
@@ -353,7 +353,6 @@
 
         renderChips_([best.token]);
         statusEl.textContent = `OCR 후보: ${best.token}`;
-        // OCR은 키워드로 검색
         lookupJSONP_({ mode: "keyword", keyword: best.token, _accKey: "K:" + best.token });
 
       } catch (e) {
@@ -505,7 +504,6 @@
             params.mode === "code" ? ("C:" + (params.code || "")) : ("K:" + (params.keyword || ""))
           );
 
-          // ===== 누적 모드 =====
           if (ACC_MODE) {
             if (params.mode === "code") {
               const row = {
@@ -534,7 +532,6 @@
             }
           }
 
-          // ===== 단일 모드(기존 동작) =====
           if (params.mode === "code") {
             statusEl.textContent = "완료";
             const loc = String(data.location || "").replace(/\s+/g, "");
@@ -603,8 +600,19 @@
         .replaceAll("'", "&#039;");
     }
     function escAttr_(s) {
-      // attribute용 최소 이스케이프
       return String(s ?? "").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    }
+
+    // PWA: 서비스워커 등록
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", async () => {
+        try {
+          await navigator.serviceWorker.register("./sw.js");
+          console.log("Service Worker registered");
+        } catch (err) {
+          console.error("Service Worker registration failed:", err);
+        }
+      });
     }
   </script>
 </body>
