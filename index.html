@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>로케이션 조회 (QR/텍스트)</title>
 
-  <!-- PWA -->
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#ffffff" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -64,12 +63,10 @@
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
-
     #searchResult,
     #cartResult {
       overflow-x: auto;
     }
-
     table {
       border-collapse: collapse;
       width: 100%;
@@ -86,7 +83,6 @@
       background: #f3f3f3;
       text-align: left;
     }
-
     th.action, td.action {
       width: 90px;
       min-width: 90px;
@@ -109,7 +105,6 @@
       min-width: 140px;
       white-space: nowrap;
     }
-
     .section-title {
       font-weight: 700;
       margin-bottom: 4px;
@@ -119,33 +114,30 @@
 <body>
   <h3>로케이션 조회</h3>
   <div class="hint">QR(상품코드/스타일키) / 상품명 키워드 검색</div>
+  <div class="small">매장별 API 사용 가능: 주소 뒤에 <span class="mono">?api=앱스크립트URL</span> 추가</div>
 
-  <!-- QR -->
   <div id="reader"></div>
   <div class="row">
     <button id="btnStart">QR 스캔 시작</button>
     <button id="btnStop">QR 스캔 중지</button>
   </div>
 
-  <!-- 텍스트 검색 -->
   <div class="row">
     <input id="kw" type="text" placeholder="키워드(예: FEZ / AERO)" />
     <button id="btnKw">상품명 검색</button>
   </div>
 
-  <!-- 상태 -->
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
     <div><b>검색값:</b> <span id="code" class="mono"></span></div>
+    <div><b>사용 API:</b> <span id="apiBase" class="mono small"></span></div>
   </div>
 
-  <!-- 검색 결과 -->
   <div class="box">
     <div class="section-title">검색 결과</div>
     <div id="searchResult"><div class="hint">검색 결과 없음</div></div>
   </div>
 
-  <!-- 담은 목록 -->
   <div class="box">
     <div class="row" style="justify-content: space-between;">
       <div class="section-title">담은 목록</div>
@@ -157,6 +149,7 @@
   <script src="https://unpkg.com/html5-qrcode"></script>
 
   <script>
+    // 기본 API + 매장별 API 분리 복구
     const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbwb7N0iNMT4Pg3i2INRrcJTEeAfovMATjtH0kKvPr5kJ_VwxVSntfNjW-KG_hIB2SCq/exec";
     const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
 
@@ -166,9 +159,11 @@
     const searchResultEl = document.getElementById("searchResult");
     const cartResultEl = document.getElementById("cartResult");
     const btnClearCart = document.getElementById("btnClearCart");
+    const apiBaseEl = document.getElementById("apiBase");
+
+    apiBaseEl.textContent = API_BASE;
 
     // 장바구니
-    // key: code가 있으면 code, 없으면 location|name
     const cartMap = new Map();
     const cartOrder = [];
 
@@ -201,14 +196,42 @@
       statusEl.textContent = "삭제 완료";
     }
 
+    function sortRowsByLocation_(rows) {
+      return [...rows].sort((a, b) => {
+        const locA = String(a.location || "").replace(/\s+/g, "").toUpperCase();
+        const locB = String(b.location || "").replace(/\s+/g, "").toUpperCase();
+
+        if (locA < locB) return -1;
+        if (locA > locB) return 1;
+
+        const nameA = String(a.name || "").toUpperCase();
+        const nameB = String(b.name || "").toUpperCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+
+        const codeA = String(a.code || "").toUpperCase();
+        const codeB = String(b.code || "").toUpperCase();
+        if (codeA < codeB) return -1;
+        if (codeA > codeB) return 1;
+
+        return 0;
+      });
+    }
+
     function renderCart_() {
       if (!cartOrder.length) {
         cartResultEl.innerHTML = "<div class='hint'>담은 항목 없음</div>";
         return;
       }
 
+      const rows = cartOrder
+        .map(key => cartMap.get(key))
+        .filter(Boolean);
+
+      const sortedRows = sortRowsByLocation_(rows);
+
       let html = `
-        <div class="small">담은 항목: <b>${cartOrder.length}개</b></div>
+        <div class="small">담은 항목: <b>${sortedRows.length}개</b></div>
         <table>
           <thead>
             <tr>
@@ -222,10 +245,8 @@
           <tbody>
       `;
 
-      for (const key of cartOrder) {
-        const row = cartMap.get(key);
-        if (!row) continue;
-
+      sortedRows.forEach(row => {
+        const key = makeCartKey_(row);
         const loc = String(row.location || "").replace(/\s+/g, "");
         const note = String(row.note || "").trim();
 
@@ -240,7 +261,7 @@
             <td class="code mono">${esc_(row.code || "")}</td>
           </tr>
         `;
-      }
+      });
 
       html += `
           </tbody>
@@ -270,7 +291,10 @@
         return;
       }
 
+      const sortedRows = sortRowsByLocation_(rows);
+
       let html = `
+        <div class="small">정렬 기준: <b>로케이션 오름차순</b></div>
         <table>
           <thead>
             <tr>
@@ -284,7 +308,7 @@
           <tbody>
       `;
 
-      rows.forEach((row, idx) => {
+      sortedRows.forEach((row, idx) => {
         const loc = String(row.location || "").replace(/\s+/g, "");
         const note = String(row.note || "").trim();
 
@@ -311,7 +335,7 @@
       searchResultEl.querySelectorAll("button[data-addidx]").forEach(btn => {
         btn.onclick = () => {
           const idx = Number(btn.getAttribute("data-addidx"));
-          const row = rows[idx];
+          const row = sortedRows[idx];
           if (!row) return;
           addToCart_(row);
         };
@@ -474,7 +498,6 @@
         .replaceAll('"', "&quot;");
     }
 
-    // PWA service worker
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         try {
