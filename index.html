@@ -63,10 +63,12 @@
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
+
     #searchResult,
     #cartResult {
       overflow-x: auto;
     }
+
     table {
       border-collapse: collapse;
       width: 100%;
@@ -83,6 +85,7 @@
       background: #f3f3f3;
       text-align: left;
     }
+
     th.action, td.action {
       width: 90px;
       min-width: 90px;
@@ -105,6 +108,7 @@
       min-width: 140px;
       white-space: nowrap;
     }
+
     .section-title {
       font-weight: 700;
       margin-bottom: 4px;
@@ -129,7 +133,6 @@
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
     <div><b>검색값:</b> <span id="code" class="mono"></span></div>
-
   </div>
 
   <div class="box">
@@ -148,7 +151,7 @@
   <script src="https://unpkg.com/html5-qrcode"></script>
 
   <script>
-    // 기본 API + 매장별 API 분리 복구
+    // 기본 API + 매장별 API 분리 유지
     const DEFAULT_API_BASE = "https://script.google.com/macros/s/AKfycbwb7N0iNMT4Pg3i2INRrcJTEeAfovMATjtH0kKvPr5kJ_VwxVSntfNjW-KG_hIB2SCq/exec";
     const API_BASE = new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE;
 
@@ -158,8 +161,6 @@
     const searchResultEl = document.getElementById("searchResult");
     const cartResultEl = document.getElementById("cartResult");
     const btnClearCart = document.getElementById("btnClearCart");
-    
-
 
     // 장바구니
     const cartMap = new Map();
@@ -292,7 +293,6 @@
       const sortedRows = sortRowsByLocation_(rows);
 
       let html = `
-        <div class="small">정렬 기준: <b>로케이션 오름차순</b></div>
         <table>
           <thead>
             <tr>
@@ -509,5 +509,3 @@
   </script>
 </body>
 </html>
-
-
