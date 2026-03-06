@@ -130,7 +130,7 @@
   <div class="box">
     <div><b>상태:</b> <span id="status">대기</span></div>
     <div><b>검색값:</b> <span id="code" class="mono"></span></div>
-    <div><b>사용 API:</b> <span id="apiBase" class="mono small"></span></div>
+
   </div>
 
   <div class="box">
@@ -159,9 +159,8 @@
     const searchResultEl = document.getElementById("searchResult");
     const cartResultEl = document.getElementById("cartResult");
     const btnClearCart = document.getElementById("btnClearCart");
-    const apiBaseEl = document.getElementById("apiBase");
+    
 
-    apiBaseEl.textContent = API_BASE;
 
     // 장바구니
     const cartMap = new Map();
@@ -511,3 +510,4 @@
   </script>
 </body>
 </html>
+
